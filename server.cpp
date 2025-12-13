@@ -2,53 +2,45 @@
 #include <fstream>
 #include <sstream>
 #include <string>
-#include <unordered_set>
 #include <vector>
-#include <cstring>
 #include <unistd.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
-#include <openssl/sha.h>
 
-#define PORT 9000
 #define BUF 4096
-#define STORAGE "storage/"
-#define CHUNKS  "storage/chunks/"
-#define FILES   "storage/files/"
-
-/* ---------- helpers ---------- */
+#define CHUNKS "storage/chunks/"
+#define FILES  "storage/files/"
 
 bool recv_line(int fd, std::string &line) {
-    char c;
-    line.clear();
-    while (true) {
-        int r = recv(fd, &c, 1, 0);
-        if (r <= 0) return false;
-        if (c == '\n') break;
+    char c; line.clear();
+    while (recv(fd, &c, 1, 0) == 1) {
+        if (c == '\n') return true;
         line.push_back(c);
     }
-    return true;
+    return false;
 }
 
-std::string sha256(const unsigned char *data, size_t len) {
-    unsigned char h[SHA256_DIGEST_LENGTH];
-    SHA256(data, len, h);
-    char out[65];
-    for (int i = 0; i < 32; i++)
-        sprintf(out + i * 2, "%02x", h[i]);
-    out[64] = 0;
-    return std::string(out);
-}
-
-bool file_exists(const std::string &p) {
+bool exists(const std::string &p) {
     return access(p.c_str(), F_OK) == 0;
 }
 
-/* ---------- main ---------- */
+int count_lines(const std::string &f) {
+    std::ifstream in(f);
+    int c = 0; std::string s;
+    while (std::getline(in, s)) if (!s.empty()) c++;
+    return c;
+}
 
-int main() {
-    mkdir(STORAGE, 0755);
+int main(int argc, char *argv[]) {
+    if (argc != 2) {
+        std::cout << "Usage: ./server <port>\n";
+        return 1;
+    }
+
+    int port = std::stoi(argv[1]);
+
+    mkdir("storage", 0755);
     mkdir(CHUNKS, 0755);
     mkdir(FILES, 0755);
 
@@ -59,134 +51,92 @@ int main() {
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
-    addr.sin_port = htons(PORT);
+    addr.sin_port = htons(port);
 
     bind(sfd, (sockaddr*)&addr, sizeof(addr));
     listen(sfd, 10);
 
-    std::cout << "Dedup server listening on " << PORT << "\n";
+    std::cout << "Server listening on " << port << "\n";
 
     while (true) {
         int cfd = accept(sfd, nullptr, nullptr);
         if (cfd < 0) continue;
 
-        std::string header;
-        if (!recv_line(cfd, header)) {
-            close(cfd);
-            continue;
-        }
+        std::string h;
+        if (!recv_line(cfd, h)) { close(cfd); continue; }
 
-        std::istringstream iss(header);
-        std::string cmd;
-        iss >> cmd;
+        std::istringstream iss(h);
+        std::string cmd; iss >> cmd;
 
-        /* ---------- HAVE ---------- */
-        if (cmd == "HAVE") {
-            std::string hash;
-            iss >> hash;
-
-            std::string path = std::string(CHUNKS) + hash;
-            if (file_exists(path))
-                send(cfd, "YES\n", 4, 0);
-            else
-                send(cfd, "NO\n", 3, 0);
-
-            close(cfd);
-            continue;
-        }
-
-        /* ---------- PUT ---------- */
-        if (cmd == "PUT") {
-            std::string hash;
-            int size;
-            iss >> hash >> size;
-
-            std::vector<char> buf(size);
-            int rec = 0;
-            while (rec < size) {
-                int n = recv(cfd, buf.data() + rec, size - rec, 0);
-                if (n <= 0) break;
-                rec += n;
-            }
-
-            if (rec != size) {
-                close(cfd);
-                continue;
-            }
-
-            std::string calc = sha256((unsigned char*)buf.data(), size);
-            if (calc != hash) {
-                close(cfd);
-                continue;
-            }
-
-            std::string path = std::string(CHUNKS) + hash;
-            if (!file_exists(path)) {
-                std::ofstream out(path, std::ios::binary);
-                out.write(buf.data(), size);
-                out.close();
-            }
-
+        if (cmd == "BEGIN") {
+            std::string f; iss >> f;
+            std::ofstream(FILES + f + ".meta", std::ios::trunc);
             send(cfd, "OK\n", 3, 0);
-            close(cfd);
-            continue;
         }
 
-        /* ---------- FILE META (append chunk) ---------- */
-        if (cmd == "APPEND") {
-            std::string filename, hash;
-            iss >> filename >> hash;
+        else if (cmd == "RESUME") {
+            std::string f; iss >> f;
+            int off = exists(FILES + f + ".meta")
+                      ? count_lines(FILES + f + ".meta")
+                      : 0;
+            std::ostringstream r;
+            r << "OFFSET " << off << "\n";
+            send(cfd, r.str().c_str(), r.str().size(), 0);
+        }
 
-            std::string meta = std::string(FILES) + filename + ".meta";
-            std::ofstream out(meta, std::ios::app);
-            out << hash << "\n";
-            out.close();
+        else if (cmd == "HAVE") {
+            std::string x; iss >> x;
+            send(cfd, exists(CHUNKS + x) ? "YES\n" : "NO\n", 4, 0);
+        }
 
+        else if (cmd == "PUT") {
+            std::string x; int sz;
+            iss >> x >> sz;
+            std::vector<char> b(sz);
+            int r = 0;
+            while (r < sz)
+                r += recv(cfd, b.data()+r, sz-r, 0);
+
+            if (!exists(CHUNKS + x)) {
+                std::ofstream o(CHUNKS + x, std::ios::binary);
+                o.write(b.data(), sz);
+            }
             send(cfd, "OK\n", 3, 0);
-            close(cfd);
-            continue;
         }
 
-        /* ---------- DOWNLOAD ---------- */
-        if (cmd == "DOWNLOAD") {
-            std::string filename;
-            iss >> filename;
+        else if (cmd == "APPEND") {
+            std::string f, x;
+            iss >> f >> x;
+            std::ofstream o(FILES + f + ".meta", std::ios::app);
+            o << x << "\n";
+            send(cfd, "OK\n", 3, 0);
+        }
 
-            std::string meta = std::string(FILES) + filename + ".meta";
-            std::ifstream in(meta);
-            if (!in) {
+        else if (cmd == "DOWNLOAD") {
+            std::string f; iss >> f;
+            std::ifstream m(FILES + f + ".meta");
+            if (!m) {
                 send(cfd, "ERROR\n", 6, 0);
-                close(cfd);
-                continue;
-            }
-
-            std::vector<std::string> chunks;
-            std::string line;
-            while (std::getline(in, line)) {
-                if (!line.empty())
-                    chunks.push_back(line);
-            }
-            in.close();
-
-            send(cfd, "OK\n", 3, 0);
-
-            for (auto &h : chunks) {
-                std::string path = std::string(CHUNKS) + h;
-                std::ifstream c(path, std::ios::binary);
-                char buf[BUF];
-                while (!c.eof()) {
-                    c.read(buf, BUF);
-                    send(cfd, buf, c.gcount(), 0);
+            } else {
+                send(cfd, "OK\n", 3, 0);
+                std::string x;
+                while (std::getline(m, x)) {
+                    if (x.empty()) continue;
+                    std::ifstream in(CHUNKS + x, std::ios::binary);
+                    in.seekg(0, std::ios::end);
+                    int sz = in.tellg();
+                    in.seekg(0);
+                    std::ostringstream h;
+                    h << "CHUNK " << sz << "\n";
+                    send(cfd, h.str().c_str(), h.str().size(), 0);
+                    char buf[BUF];
+                    while (!in.eof()) {
+                        in.read(buf, BUF);
+                        send(cfd, buf, in.gcount(), 0);
+                    }
                 }
-                c.close();
             }
-
-            close(cfd);
-            continue;
         }
-
-        /* ---------- UNKNOWN ---------- */
-        send(cfd, "ERROR\n", 6, 0);
         close(cfd);
     }
 }

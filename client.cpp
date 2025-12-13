@@ -1,177 +1,189 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <vector>
 #include <string>
 #include <cstring>
 #include <unistd.h>
 #include <arpa/inet.h>
-#include <iomanip>
 #include <openssl/evp.h>
-#include <openssl/rand.h>
 #include <openssl/sha.h>
 
-#define PORT 9000
-#define BUF 4096
-#define IV_SIZE 12
-#define TAG_SIZE 16
-#define KEY_SIZE 32
-
-/* ---------------- helpers ---------------- */
+#define CHUNK 4096
+#define KEYLEN 32
+#define IVLEN 12
+#define TAGLEN 16
 
 bool recv_line(int fd, std::string &line) {
-    char c;
-    line.clear();
-    while (true) {
-        int r = recv(fd, &c, 1, 0);
-        if (r <= 0) return false;
-        if (c == '\n') break;
+    char c; line.clear();
+    while (recv(fd, &c, 1, 0) == 1) {
+        if (c == '\n') return true;
         line.push_back(c);
     }
-    return true;
+    return false;
 }
 
-int connect_server() {
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    sockaddr_in s{};
-    s.sin_family = AF_INET;
-    s.sin_port = htons(PORT);
-    inet_pton(AF_INET, "127.0.0.1", &s.sin_addr);
-    connect(sock, (sockaddr*)&s, sizeof(s));
-    return sock;
+int connect_server(const std::string &addr) {
+    auto p = addr.find(':');
+    std::string ip = addr.substr(0, p);
+    int port = std::stoi(addr.substr(p+1));
+
+    int s = socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in a{};
+    a.sin_family = AF_INET;
+    a.sin_port = htons(port);
+    inet_pton(AF_INET, ip.c_str(), &a.sin_addr);
+
+    if (connect(s, (sockaddr*)&a, sizeof(a)) < 0) {
+        perror("connect");
+        exit(1);
+    }
+    return s;
 }
 
-std::string sha256(const unsigned char *data, size_t len) {
-    unsigned char h[SHA256_DIGEST_LENGTH];
-    SHA256(data, len, h);
-    char out[65];
-    for (int i = 0; i < 32; i++)
-        sprintf(out + i * 2, "%02x", h[i]);
-    out[64] = 0;
-    return std::string(out);
-}
-
-/* ---------------- crypto ---------------- */
-
-/*
- * Stable key derivation:
- * key = PBKDF2(passphrase, no-salt)
- */
 void derive_key(const std::string &pass, unsigned char *key) {
-    PKCS5_PBKDF2_HMAC(
-        pass.c_str(), pass.size(),
-        nullptr, 0,          // NO SALT (stable key)
-        100000,
-        EVP_sha256(),
-        KEY_SIZE,
-        key
-    );
+    PKCS5_PBKDF2_HMAC(pass.c_str(), pass.size(),
+        nullptr, 0, 100000, EVP_sha256(), KEYLEN, key);
 }
 
-/*
- * Deterministic encryption:
- * IV = first 12 bytes of SHA256(plaintext_chunk)
- */
 int encrypt_chunk(unsigned char *plain, int plen,
                   unsigned char *key, unsigned char *out) {
 
-    unsigned char hash[SHA256_DIGEST_LENGTH];
-    SHA256(plain, plen, hash);
-
-    unsigned char iv[IV_SIZE];
-    memcpy(iv, hash, IV_SIZE);
+    unsigned char iv[IVLEN];
+    SHA256(plain, plen, iv);
 
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr);
-    EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, IV_SIZE, nullptr);
+    EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, IVLEN, nullptr);
     EVP_EncryptInit_ex(ctx, nullptr, nullptr, key, iv);
 
     int len, clen;
-    EVP_EncryptUpdate(ctx, out + IV_SIZE, &len, plain, plen);
+    EVP_EncryptUpdate(ctx, out + IVLEN, &len, plain, plen);
     clen = len;
-
-    EVP_EncryptFinal_ex(ctx, out + IV_SIZE + clen, &len);
+    EVP_EncryptFinal_ex(ctx, out + IVLEN + clen, &len);
     clen += len;
 
-    EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, TAG_SIZE,
-                        out + IV_SIZE + clen);
+    EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, TAGLEN,
+                        out + IVLEN + clen);
 
-    memcpy(out, iv, IV_SIZE);
+    memcpy(out, iv, IVLEN);
     EVP_CIPHER_CTX_free(ctx);
 
-    return IV_SIZE + clen + TAG_SIZE;
+    return IVLEN + clen + TAGLEN;
 }
 
-/* ---------------- main ---------------- */
+std::string sha256(const unsigned char *d, int n) {
+    unsigned char h[32];
+    SHA256(d, n, h);
+    char out[65];
+    for (int i = 0; i < 32; i++)
+        sprintf(out + i*2, "%02x", h[i]);
+    out[64] = 0;
+    return out;
+}
 
 int main(int argc, char *argv[]) {
-    if (argc < 3) {
-        std::cout << "./client upload <file>\n";
+    if (argc != 4) {
+        std::cout <<
+        "Usage:\n"
+        "  ./client upload <file> <ip:port>\n"
+        "  ./client download <file> <ip:port>\n";
         return 1;
     }
 
     std::string mode = argv[1];
     std::string file = argv[2];
-
-    if (mode != "upload") {
-        std::cout << "Only upload supported in this phase\n";
-        return 1;
-    }
+    std::string server = argv[3];
 
     std::string pass;
     std::cout << "Enter passphrase: ";
     std::getline(std::cin, pass);
 
-    unsigned char key[KEY_SIZE];
+    unsigned char key[KEYLEN];
     derive_key(pass, key);
 
-    std::ifstream in(file, std::ios::binary);
-    if (!in) {
-        std::cout << "File not found\n";
-        return 1;
+    if (mode == "upload") {
+        int s = connect_server(server);
+        std::ostringstream b;
+        b << "BEGIN " << file << "\n";
+        send(s, b.str().c_str(), b.str().size(), 0);
+        recv_line(s, pass);
+        close(s);
+
+        s = connect_server(server);
+        std::ostringstream r;
+        r << "RESUME " << file << "\n";
+        send(s, r.str().c_str(), r.str().size(), 0);
+        std::string resp;
+        recv_line(s, resp);
+        close(s);
+
+        int offset = std::stoi(resp.substr(7));
+        std::ifstream in(file, std::ios::binary);
+        in.seekg((long long)offset * CHUNK);
+
+        unsigned char plain[CHUNK], enc[CHUNK + 64];
+
+        while (true) {
+            in.read((char*)plain, CHUNK);
+            int n = in.gcount();
+            if (n <= 0) break;
+
+            int esz = encrypt_chunk(plain, n, key, enc);
+            std::string h = sha256(enc, esz);
+
+            s = connect_server(server);
+            std::ostringstream q;
+            q << "HAVE " << h << "\n";
+            send(s, q.str().c_str(), q.str().size(), 0);
+            recv_line(s, resp);
+            close(s);
+
+            if (resp != "YES") {
+                s = connect_server(server);
+                std::ostringstream p;
+                p << "PUT " << h << " " << esz << "\n";
+                send(s, p.str().c_str(), p.str().size(), 0);
+                send(s, enc, esz, 0);
+                recv_line(s, resp);
+                close(s);
+            }
+
+            s = connect_server(server);
+            std::ostringstream a;
+            a << "APPEND " << file << " " << h << "\n";
+            send(s, a.str().c_str(), a.str().size(), 0);
+            recv_line(s, resp);
+            close(s);
+        }
+        std::cout << "Upload complete\n";
     }
 
-    unsigned char plain[BUF];
-    unsigned char enc[BUF + 64];
+    if (mode == "download") {
+        int s = connect_server(server);
+        std::ostringstream q;
+        q << "DOWNLOAD " << file << "\n";
+        send(s, q.str().c_str(), q.str().size(), 0);
 
-    while (true) {
-        in.read((char*)plain, BUF);
-        int r = in.gcount();
-        if (r <= 0) break;
-
-        int enc_len = encrypt_chunk(plain, r, key, enc);
-        std::string hash = sha256(enc, enc_len);
-
-        /* ---------- HAVE ---------- */
-        int sock = connect_server();
-        std::ostringstream hq;
-        hq << "HAVE " << hash << "\n";
-        send(sock, hq.str().c_str(), hq.str().size(), 0);
-
-        std::string resp;
-        bool ok = recv_line(sock, resp);
-        close(sock);
-
-        /* ---------- PUT unless server explicitly says YES ---------- */
-        if (!ok || resp != "YES") {
-            sock = connect_server();
-            std::ostringstream pq;
-            pq << "PUT " << hash << " " << enc_len << "\n";
-            send(sock, pq.str().c_str(), pq.str().size(), 0);
-            send(sock, enc, enc_len, 0);
-            recv_line(sock, resp);
-            close(sock);
+        std::string line;
+        recv_line(s, line);
+        if (line != "OK") {
+            std::cout << "Download failed\n";
+            return 1;
         }
 
-        /* ---------- APPEND ---------- */
-        sock = connect_server();
-        std::ostringstream aq;
-        aq << "APPEND " << file << " " << hash << "\n";
-        send(sock, aq.str().c_str(), aq.str().size(), 0);
-        recv_line(sock, resp);
-        close(sock);
-    }
+        std::ofstream out(file, std::ios::binary);
+        unsigned char buf[CHUNK + 64];
 
-    in.close();
-    std::cout << "Deduplicated encrypted upload complete\n";
-    return 0;
+        while (recv_line(s, line)) {
+            if (line.rfind("CHUNK ", 0) != 0) break;
+            int sz = std::stoi(line.substr(6));
+            int r = 0;
+            while (r < sz)
+                r += recv(s, buf + r, sz - r, 0);
+            out.write((char*)buf, sz);
+        }
+        close(s);
+        std::cout << "Download complete\n";
+    }
 }
