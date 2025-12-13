@@ -1,9 +1,20 @@
+# build artifacts
 build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# runtime storage
 storage/
 chunks/
 manifests/
-client
-server
+
+# secrets
 *.key
+*.pass
 .env
 
+# binaries
+client
+server
