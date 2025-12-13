@@ -1,0 +1,9 @@
+build/
+storage/
+chunks/
+manifests/
+client
+server
+*.key
+.env
+
