@@ -1,142 +1,156 @@
 #include <iostream>
 #include <fstream>
-#include <sstream>
-#include <string>
+#include <filesystem>
 #include <vector>
+#include <string>
+#include <sstream>
+#include <arpa/inet.h>
 #include <unistd.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
 
-#define BUF 4096
-#define CHUNKS "storage/chunks/"
-#define FILES  "storage/files/"
+using namespace std;
+namespace fs = std::filesystem;
 
-bool recv_line(int fd, std::string &line) {
-    char c; line.clear();
-    while (recv(fd, &c, 1, 0) == 1) {
-        if (c == '\n') return true;
-        line.push_back(c);
+/*
+ PROTOCOL (FINAL):
+
+ PUT <chunk_id> <size>\n
+ <raw bytes>
+
+ FETCH <chunk_id>\n
+
+ RESPONSE (FETCH):
+ <size>\n
+ <raw bytes>
+*/
+
+static bool recv_all(int sock, void* buf, size_t size) {
+    size_t got = 0;
+    char* p = static_cast<char*>(buf);
+    while (got < size) {
+        ssize_t r = recv(sock, p + got, size - got, 0);
+        if (r <= 0) return false;
+        got += r;
     }
-    return false;
+    return true;
 }
 
-bool exists(const std::string &p) {
-    return access(p.c_str(), F_OK) == 0;
+static bool send_all(int sock, const void* buf, size_t size) {
+    size_t sent = 0;
+    const char* p = static_cast<const char*>(buf);
+    while (sent < size) {
+        ssize_t s = send(sock, p + sent, size - sent, 0);
+        if (s <= 0) return false;
+        sent += s;
+    }
+    return true;
 }
 
-int count_lines(const std::string &f) {
-    std::ifstream in(f);
-    int c = 0; std::string s;
-    while (std::getline(in, s)) if (!s.empty()) c++;
-    return c;
-}
-
-int main(int argc, char *argv[]) {
+int main(int argc, char* argv[]) {
     if (argc != 2) {
-        std::cout << "Usage: ./server <port>\n";
+        cerr << "Usage: ./server <port>\n";
         return 1;
     }
 
-    int port = std::stoi(argv[1]);
+    int port = stoi(argv[1]);
 
-    mkdir("storage", 0755);
-    mkdir(CHUNKS, 0755);
-    mkdir(FILES, 0755);
+    // Persistent storage path (absolute, deterministic)
+    fs::path storage =
+        fs::current_path() /
+        "storage" /
+        ("server_" + to_string(port)) /
+        "chunks";
 
-    int sfd = socket(AF_INET, SOCK_STREAM, 0);
+    fs::create_directories(storage);
+
+    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd < 0) {
+        perror("socket");
+        return 1;
+    }
+
     int opt = 1;
-    setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port = htons(port);
 
-    bind(sfd, (sockaddr*)&addr, sizeof(addr));
-    listen(sfd, 10);
+    if (bind(server_fd, (sockaddr*)&addr, sizeof(addr)) < 0) {
+        perror("bind");
+        return 1;
+    }
 
-    std::cout << "Server listening on " << port << "\n";
+    if (listen(server_fd, 16) < 0) {
+        perror("listen");
+        return 1;
+    }
+
+    cout << "[server] listening on port " << port << endl;
+    cout << "[server] storage: " << storage << endl;
 
     while (true) {
-        int cfd = accept(sfd, nullptr, nullptr);
-        if (cfd < 0) continue;
+        int client = accept(server_fd, nullptr, nullptr);
+        if (client < 0) continue;
 
-        std::string h;
-        if (!recv_line(cfd, h)) { close(cfd); continue; }
-
-        std::istringstream iss(h);
-        std::string cmd; iss >> cmd;
-
-        if (cmd == "BEGIN") {
-            std::string f; iss >> f;
-            std::ofstream(FILES + f + ".meta", std::ios::trunc);
-            send(cfd, "OK\n", 3, 0);
+        // Read command line
+        string line;
+        char ch;
+        while (recv(client, &ch, 1, 0) == 1) {
+            if (ch == '\n') break;
+            line.push_back(ch);
         }
 
-        else if (cmd == "RESUME") {
-            std::string f; iss >> f;
-            int off = exists(FILES + f + ".meta")
-                      ? count_lines(FILES + f + ".meta")
-                      : 0;
-            std::ostringstream r;
-            r << "OFFSET " << off << "\n";
-            send(cfd, r.str().c_str(), r.str().size(), 0);
-        }
+        if (line.rfind("PUT ", 0) == 0) {
+            // PUT <chunk_id> <size>
+            string cmd, chunk_id;
+            size_t size;
 
-        else if (cmd == "HAVE") {
-            std::string x; iss >> x;
-            send(cfd, exists(CHUNKS + x) ? "YES\n" : "NO\n", 4, 0);
-        }
+            stringstream ss(line);
+            ss >> cmd >> chunk_id >> size;
 
-        else if (cmd == "PUT") {
-            std::string x; int sz;
-            iss >> x >> sz;
-            std::vector<char> b(sz);
-            int r = 0;
-            while (r < sz)
-                r += recv(cfd, b.data()+r, sz-r, 0);
-
-            if (!exists(CHUNKS + x)) {
-                std::ofstream o(CHUNKS + x, std::ios::binary);
-                o.write(b.data(), sz);
+            if (chunk_id.empty() || size == 0) {
+                close(client);
+                continue;
             }
-            send(cfd, "OK\n", 3, 0);
-        }
 
-        else if (cmd == "APPEND") {
-            std::string f, x;
-            iss >> f >> x;
-            std::ofstream o(FILES + f + ".meta", std::ios::app);
-            o << x << "\n";
-            send(cfd, "OK\n", 3, 0);
-        }
-
-        else if (cmd == "DOWNLOAD") {
-            std::string f; iss >> f;
-            std::ifstream m(FILES + f + ".meta");
-            if (!m) {
-                send(cfd, "ERROR\n", 6, 0);
-            } else {
-                send(cfd, "OK\n", 3, 0);
-                std::string x;
-                while (std::getline(m, x)) {
-                    if (x.empty()) continue;
-                    std::ifstream in(CHUNKS + x, std::ios::binary);
-                    in.seekg(0, std::ios::end);
-                    int sz = in.tellg();
-                    in.seekg(0);
-                    std::ostringstream h;
-                    h << "CHUNK " << sz << "\n";
-                    send(cfd, h.str().c_str(), h.str().size(), 0);
-                    char buf[BUF];
-                    while (!in.eof()) {
-                        in.read(buf, BUF);
-                        send(cfd, buf, in.gcount(), 0);
-                    }
-                }
+            vector<char> data(size);
+            if (!recv_all(client, data.data(), size)) {
+                close(client);
+                continue;
             }
+
+            ofstream out(storage / chunk_id, ios::binary);
+            out.write(data.data(), data.size());
+            out.close();
+
+            cout << "[server " << port << "] stored chunk " << chunk_id
+                 << " (" << size << " bytes)" << endl;
         }
-        close(cfd);
+
+        else if (line.rfind("FETCH ", 0) == 0) {
+            // FETCH <chunk_id>
+            string chunk_id = line.substr(6);
+            fs::path file = storage / chunk_id;
+
+            if (!fs::exists(file)) {
+                close(client);
+                continue;
+            }
+
+            ifstream in(file, ios::binary);
+            in.seekg(0, ios::end);
+            size_t size = in.tellg();
+            in.seekg(0);
+
+            string header = to_string(size) + "\n";
+            send_all(client, header.c_str(), header.size());
+
+            vector<char> buf(size);
+            in.read(buf.data(), size);
+            send_all(client, buf.data(), buf.size());
+        }
+
+        close(client);
     }
 }

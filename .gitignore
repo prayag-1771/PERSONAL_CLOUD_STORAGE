@@ -1,20 +1,15 @@
-# build artifacts
+# Build artifacts
 build/
-CMakeFiles/
-CMakeCache.txt
-cmake_install.cmake
-Makefile
-
-# runtime storage
 storage/
-chunks/
-manifests/
 
-# secrets
-*.key
-*.pass
-.env
-
-# binaries
+# Binaries
 client
 server
+
+# Metadata / runtime files
+*.ecmeta
+*.bin
+*.txt
+
+# OS noise
+.DS_Store

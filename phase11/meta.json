@@ -1,0 +1,10 @@
+{
+  "original_size": 27,
+  "k": 3,
+  "pieces": [
+    { "id": "piece_0", "server": "127.0.0.1:9000" },
+    { "id": "piece_1", "server": "127.0.0.1:9001" },
+    { "id": "piece_2", "server": "127.0.0.1:9002" },
+    { "id": "piece_3", "server": "127.0.0.1:9003" }
+  ]
+}
