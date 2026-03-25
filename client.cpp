@@ -3,6 +3,7 @@
 #include <vector>
 #include <string>
 #include <sstream>
+#include <iomanip>
 #include <filesystem>
 #include <map>
 #include <arpa/inet.h>
@@ -41,6 +42,15 @@ static vector<uint8_t> sha256(const vector<uint8_t>& data) {
     vector<uint8_t> hash(SHA256_DIGEST_LENGTH);
     SHA256(data.data(), data.size(), hash.data());
     return hash;
+}
+
+static string sha256_hex(const vector<uint8_t>& data) {
+    auto hash = sha256(data);
+    ostringstream oss;
+    oss << hex;
+    for (uint8_t b : hash)
+        oss << setw(2) << setfill('0') << (int)b;
+    return oss.str();
 }
 
 static vector<uint8_t> xor_buf(const vector<uint8_t>& a,
@@ -199,9 +209,9 @@ int main(int argc, char* argv[]) {
         vector<uint8_t> d1(cipher.begin() + mid, cipher.end());
         auto parity = xor_buf(d0, d1);
 
-        string h0 = "chunk_" + to_string(sha256(d0)[0]);
-        string h1 = "chunk_" + to_string(sha256(d1)[0]);
-        string hp = "chunk_" + to_string(sha256(parity)[0]);
+        string h0 = sha256_hex(d0);
+        string h1 = sha256_hex(d1);
+        string hp = sha256_hex(parity);
 
         ofstream meta(file + ".ecmeta");
         meta << orig_size << "\n";
