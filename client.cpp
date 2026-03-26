@@ -61,6 +61,27 @@ static vector<uint8_t> xor_buf(const vector<uint8_t>& a,
     return r;
 }
 
+/* GF(2^8) multiply with irreducible polynomial x^8 + x^4 + x^3 + x + 1 (0x11B) */
+static uint8_t gf_mul(uint8_t a, uint8_t b) {
+    uint8_t result = 0;
+    while (b) {
+        if (b & 1) result ^= a;
+        bool hi = a & 0x80;
+        a <<= 1;
+        if (hi) a ^= 0x1B;
+        b >>= 1;
+    }
+    return result;
+}
+
+/* Multiply every byte in buf by coefficient in GF(256) */
+static vector<uint8_t> gf_scale(const vector<uint8_t>& buf, uint8_t coeff) {
+    vector<uint8_t> r(buf.size());
+    for (size_t i = 0; i < buf.size(); i++)
+        r[i] = gf_mul(buf[i], coeff);
+    return r;
+}
+
 /* ===================== CRYPTO ===================== */
 
 static vector<uint8_t> derive_key(const string& pass) {
@@ -207,11 +228,15 @@ int main(int argc, char* argv[]) {
         size_t mid = cipher.size() / 2;
         vector<uint8_t> d0(cipher.begin(), cipher.begin() + mid);
         vector<uint8_t> d1(cipher.begin() + mid, cipher.end());
-        auto parity = xor_buf(d0, d1);
+        // P0 = d0 XOR d1  (simple XOR parity)
+        auto p0 = xor_buf(d0, d1);
+        // P1 = gf(2)*d0 XOR gf(3)*d1  (weighted parity, linearly independent)
+        auto p1 = xor_buf(gf_scale(d0, 2), gf_scale(d1, 3));
 
-        string h0 = sha256_hex(d0);
-        string h1 = sha256_hex(d1);
-        string hp = sha256_hex(parity);
+        string h0  = sha256_hex(d0);
+        string h1  = sha256_hex(d1);
+        string hp0 = sha256_hex(p0);
+        string hp1 = sha256_hex(p1);
 
         ofstream meta(file + ".ecmeta");
         meta << orig_size << "\n";
@@ -225,11 +250,11 @@ int main(int argc, char* argv[]) {
         put_chunk(argv[4], h1, d1);
         meta << "1 " << h1 << " " << argv[4] << "\n";
 
-        put_chunk(argv[5], hp, parity);
-        meta << "2 " << hp << " " << argv[5] << "\n";
+        put_chunk(argv[5], hp0, p0);
+        meta << "2 " << hp0 << " " << argv[5] << "\n";
 
-        put_chunk(argv[6], hp, parity);
-        meta << "3 " << hp << " " << argv[6] << "\n";
+        put_chunk(argv[6], hp1, p1);
+        meta << "3 " << hp1 << " " << argv[6] << "\n";
 
         cout << "Encrypted erasure upload complete\n";
     }
@@ -266,31 +291,63 @@ int main(int argc, char* argv[]) {
         getline(cin, pass);
         auto key = derive_key(pass);
 
-        vector<uint8_t> d0, d1, p;
+        vector<uint8_t> d0, d1, p0, p1;
 
         for (auto& [i, e] : entries) {
             vector<uint8_t> buf;
             if (fetch_chunk(e.second, e.first, buf)) {
-                if (i == 0) d0 = buf;
+                if      (i == 0) d0 = buf;
                 else if (i == 1) d1 = buf;
-                else p = buf;
+                else if (i == 2) p0 = buf;
+                else if (i == 3) p1 = buf;
             }
         }
 
+        // Recovery logic for k=2, m=2
+        // Have both data chunks — no recovery needed
+        // Missing one data chunk — recover from P0 (simple XOR)
+        // Missing both data chunks — recover from P0 and P1 using GF(256) math
         vector<uint8_t> cipher;
+
         if (!d0.empty() && !d1.empty()) {
+            // Best case: both data chunks available
             cipher = d0;
             cipher.insert(cipher.end(), d1.begin(), d1.end());
-        } else if (!d0.empty() && !p.empty()) {
-            d1 = xor_buf(d0, p);
+        } else if (!d0.empty() && !p0.empty()) {
+            // Lost d1, recover: d1 = d0 XOR P0
+            d1 = xor_buf(d0, p0);
             cipher = d0;
             cipher.insert(cipher.end(), d1.begin(), d1.end());
-        } else if (!d1.empty() && !p.empty()) {
-            d0 = xor_buf(d1, p);
+        } else if (!d1.empty() && !p0.empty()) {
+            // Lost d0, recover: d0 = d1 XOR P0
+            d0 = xor_buf(d1, p0);
+            cipher = d0;
+            cipher.insert(cipher.end(), d1.begin(), d1.end());
+        } else if (!d0.empty() && !p1.empty()) {
+            // Lost d1, have P1: P1 = 2*d0 XOR 3*d1 → d1 = gf_inv(3) * (P1 XOR 2*d0)
+            auto tmp = xor_buf(p1, gf_scale(d0, 2));
+            // inverse of 3 in GF(256) with 0x11B is 0xF6
+            d1 = gf_scale(tmp, 0xF6);
+            cipher = d0;
+            cipher.insert(cipher.end(), d1.begin(), d1.end());
+        } else if (!d1.empty() && !p1.empty()) {
+            // Lost d0, have P1: P1 = 2*d0 XOR 3*d1 → d0 = gf_inv(2) * (P1 XOR 3*d1)
+            auto tmp = xor_buf(p1, gf_scale(d1, 3));
+            // inverse of 2 in GF(256) with 0x11B is 0x8D
+            d0 = gf_scale(tmp, 0x8D);
+            cipher = d0;
+            cipher.insert(cipher.end(), d1.begin(), d1.end());
+        } else if (!p0.empty() && !p1.empty()) {
+            // Lost BOTH data chunks — recover from two parities
+            // P0 = d0 XOR d1
+            // P1 = 2*d0 XOR 3*d1
+            // P1 XOR 2*P0 = 2*d0 XOR 3*d1 XOR 2*d0 XOR 2*d1 = (3 XOR 2)*d1 = 1*d1
+            d1 = xor_buf(p1, gf_scale(p0, 2));
+            d0 = xor_buf(p0, d1);
             cipher = d0;
             cipher.insert(cipher.end(), d1.begin(), d1.end());
         } else {
-            cout << "Not enough pieces\n";
+            cout << "Not enough pieces (need at least 2 of 4)\n";
             return 1;
         }
 
