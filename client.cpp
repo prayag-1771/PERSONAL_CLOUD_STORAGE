@@ -225,9 +225,11 @@ int main(int argc, char* argv[]) {
         vector<uint8_t> iv;
         auto cipher = aes_encrypt(plain, key, iv);
 
-        size_t mid = cipher.size() / 2;
-        vector<uint8_t> d0(cipher.begin(), cipher.begin() + mid);
-        vector<uint8_t> d1(cipher.begin() + mid, cipher.end());
+        size_t half = (cipher.size() + 1) / 2;  // round UP so both halves are equal
+        vector<uint8_t> d0(cipher.begin(), cipher.begin() + half);
+        vector<uint8_t> d1(half, 0);  // zero-initialized to 'half' bytes
+        // copy the remaining bytes (may be fewer than 'half' if odd length)
+        copy(cipher.begin() + half, cipher.end(), d1.begin());
         // P0 = d0 XOR d1  (simple XOR parity)
         auto p0 = xor_buf(d0, d1);
         // P1 = gf(2)*d0 XOR gf(3)*d1  (weighted parity, linearly independent)
@@ -240,6 +242,7 @@ int main(int argc, char* argv[]) {
 
         ofstream meta(file + ".ecmeta");
         meta << orig_size << "\n";
+        meta << cipher.size() << "\n";
         meta << iv.size() << "\n";
         meta.write((char*)iv.data(), iv.size());
         meta << "\n2 2\n";
@@ -268,6 +271,9 @@ int main(int argc, char* argv[]) {
 
         size_t orig_size;
         meta >> orig_size;
+
+        size_t cipher_size;
+        meta >> cipher_size;
 
         size_t iv_len;
         meta >> iv_len;
@@ -351,6 +357,7 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
+        cipher.resize(cipher_size);  // strip zero-padding from equal-size split
         auto plain = aes_decrypt(cipher, key, iv);
         plain.resize(orig_size);
 
