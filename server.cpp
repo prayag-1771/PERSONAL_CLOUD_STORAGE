@@ -6,6 +6,7 @@
 #include <sstream>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <openssl/evp.h>
 
 using namespace std;
 namespace fs = std::filesystem;
@@ -30,6 +31,36 @@ static bool send_all(int sock, const void* buf, size_t size) {
         sent += s;
     }
     return true;
+}
+
+static uint8_t hex_val(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return 10 + c - 'a';
+    if (c >= 'A' && c <= 'F') return 10 + c - 'A';
+    return 0;
+}
+
+static vector<uint8_t> hex_to_bytes(const string& hex) {
+    vector<uint8_t> bytes(hex.size() / 2);
+    for (size_t i = 0; i < bytes.size(); i++)
+        bytes[i] = (hex_val(hex[2*i]) << 4) | hex_val(hex[2*i+1]);
+    return bytes;
+}
+
+static vector<uint8_t> aes_decrypt(const vector<uint8_t>& cipher,
+                                   const vector<uint8_t>& key,
+                                   const vector<uint8_t>& iv) {
+    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+    vector<uint8_t> out(cipher.size());
+    int len1, len2;
+
+    EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), nullptr, key.data(), iv.data());
+    EVP_DecryptUpdate(ctx, out.data(), &len1, cipher.data(), cipher.size());
+    EVP_DecryptFinal_ex(ctx, out.data() + len1, &len2);
+    EVP_CIPHER_CTX_free(ctx);
+
+    out.resize(len1 + len2);
+    return out;
 }
 
 int main(int argc, char* argv[]) {
@@ -94,31 +125,36 @@ int main(int argc, char* argv[]) {
         }
 
         else if (line.rfind("UPLOAD ", 0) == 0) {
-            string cmd, filename;
-            size_t size;
+            string cmd, filename, key_hex, iv_hex;
+            size_t cipher_size;
             stringstream ss(line);
-            ss >> cmd >> filename >> size;
+            ss >> cmd >> filename >> cipher_size >> key_hex >> iv_hex;
 
-            if (filename.empty() || size == 0) {
+            if (filename.empty() || cipher_size == 0) {
                 close(client);
                 continue;
             }
 
-            vector<char> data(size);
-            if (!recv_all(client, data.data(), size)) {
+            vector<char> raw(cipher_size);
+            if (!recv_all(client, raw.data(), cipher_size)) {
                 close(client);
                 continue;
             }
+
+            vector<uint8_t> cipher_data(raw.begin(), raw.end());
+            auto key = hex_to_bytes(key_hex);
+            auto iv = hex_to_bytes(iv_hex);
+            auto plain = aes_decrypt(cipher_data, key, iv);
 
             ofstream out(file_storage / filename, ios::binary);
-            out.write(data.data(), data.size());
+            out.write((char*)plain.data(), plain.size());
             out.close();
 
             string resp = "OK\n";
             send_all(client, resp.c_str(), resp.size());
 
             cout << "[server " << port << "] stored file '"
-                 << filename << "' (" << size << " bytes)" << endl;
+                 << filename << "' (" << plain.size() << " bytes, decrypted)" << endl;
         }
 
         else if (line.rfind("PUT ", 0) == 0) {

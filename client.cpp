@@ -51,6 +51,14 @@ static string sha256_hex(const vector<uint8_t>& data) {
     return oss.str();
 }
 
+static string bytes_to_hex(const vector<uint8_t>& data) {
+    ostringstream oss;
+    oss << hex;
+    for (uint8_t b : data)
+        oss << setw(2) << setfill('0') << (int)b;
+    return oss.str();
+}
+
 static vector<uint8_t> xor_buf(const vector<uint8_t>& a,
                                const vector<uint8_t>& b) {
     size_t n = min(a.size(), b.size());
@@ -165,12 +173,19 @@ static bool ping_server(const string& addr) {
 
 static bool upload_direct(const string& addr, const string& filename,
                           const vector<uint8_t>& data) {
+    vector<uint8_t> session_key(32);
+    RAND_bytes(session_key.data(), 32);
+
+    vector<uint8_t> iv;
+    auto cipher = aes_encrypt(data, session_key, iv);
+
     int s = connect_to(addr);
     if (s < 0) return false;
 
-    string header = "UPLOAD " + filename + " " + to_string(data.size()) + "\n";
+    string header = "UPLOAD " + filename + " " + to_string(cipher.size()) +
+                    " " + bytes_to_hex(session_key) + " " + bytes_to_hex(iv) + "\n";
     if (!send_all(s, header.c_str(), header.size())) { close(s); return false; }
-    if (!send_all(s, data.data(), data.size())) { close(s); return false; }
+    if (!send_all(s, cipher.data(), cipher.size())) { close(s); return false; }
 
     string line;
     char ch;
@@ -273,7 +288,6 @@ static void do_erasure_upload(const string& file, const string& server_addr,
     meta << basename << "\n";
     meta << orig_size << "\n";
     meta << cipher.size() << "\n";
-    meta << pass << "\n";
     meta << iv.size() << "\n";
     meta.write((char*)iv.data(), iv.size());
     meta << "\n2 2\n";
@@ -292,7 +306,7 @@ static void do_erasure_upload(const string& file, const string& server_addr,
     meta << "3 " << hp1 << " " << peers[3] << "\n";
 
     if (ok)
-        cout << "Server offline. Distributed to peers. Run './client sync' when server is back.\n";
+        cout << "Server offline. Distributed to peers. Will auto-sync when server is back.\n";
     else
         cout << "Warning: some chunks failed to distribute\n";
 }
@@ -300,19 +314,17 @@ static void do_erasure_upload(const string& file, const string& server_addr,
 static vector<uint8_t> recover_from_peers(const string& meta_path,
                                           string& server_addr,
                                           string& filename,
-                                          size_t& orig_size) {
+                                          size_t& orig_size,
+                                          const string& pass) {
     ifstream meta(meta_path, ios::binary);
     if (!meta) return {};
 
-    string pass;
     size_t cipher_size, iv_len;
     int k, m;
 
     getline(meta, server_addr);
     getline(meta, filename);
     meta >> orig_size >> cipher_size;
-    meta.ignore();
-    getline(meta, pass);
     meta >> iv_len;
     meta.get();
 
@@ -334,10 +346,18 @@ static vector<uint8_t> recover_from_peers(const string& meta_path,
     for (auto& [i, e] : entries) {
         vector<uint8_t> buf;
         if (fetch_chunk(e.second, e.first, buf)) {
+            string actual_hash = sha256_hex(buf);
+            if (actual_hash != e.first) {
+                cout << "  Chunk " << i << " FAILED integrity check (corrupted). Skipping.\n";
+                continue;
+            }
+            cout << "  Chunk " << i << " verified OK\n";
             if      (i == 0) d0 = buf;
             else if (i == 1) d1 = buf;
             else if (i == 2) p0 = buf;
             else if (i == 3) p1 = buf;
+        } else {
+            cout << "  Chunk " << i << " unavailable (peer down)\n";
         }
     }
 
@@ -370,7 +390,7 @@ static vector<uint8_t> recover_from_peers(const string& meta_path,
         cipher = d0;
         cipher.insert(cipher.end(), d1.begin(), d1.end());
     } else {
-        cout << "Not enough pieces (need at least 2 of 4)\n";
+        cout << "  Not enough pieces (need at least 2 of 4)\n";
         return {};
     }
 
@@ -384,12 +404,37 @@ static vector<uint8_t> recover_from_peers(const string& meta_path,
     return plain;
 }
 
+static void do_list(const string& server) {
+    int s = connect_to(server);
+    if (s < 0) {
+        cout << "Cannot connect to server\n";
+        return;
+    }
+
+    string req = "LIST\n";
+    send_all(s, req.c_str(), req.size());
+
+    cout << "Files on server:\n";
+    string line;
+    while (true) {
+        line.clear();
+        char ch;
+        while (recv(s, &ch, 1, 0) == 1 && ch != '\n')
+            line.push_back(ch);
+        if (line == "END" || line.empty()) break;
+        cout << "  " << line << "\n";
+    }
+    close(s);
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         cout << "Usage:\n";
         cout << "  ./client upload <file> <server> [peer1 peer2 peer3 peer4]\n";
         cout << "  ./client download <file> <server>\n";
         cout << "  ./client sync\n";
+        cout << "  ./client autosync <interval_seconds>\n";
+        cout << "  ./client list <server>\n";
         return 1;
     }
 
@@ -418,7 +463,7 @@ int main(int argc, char* argv[]) {
         in.close();
 
         if (ping_server(server)) {
-            cout << "Server is online. Uploading directly...\n";
+            cout << "Server is online. Uploading directly (encrypted transit)...\n";
             string basename = fs::path(file).filename().string();
             if (upload_direct(server, basename, data))
                 cout << "Upload complete. File stored on server.\n";
@@ -495,9 +540,13 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
 
+            cout << "Enter passphrase: ";
+            string pass;
+            getline(cin, pass);
+
             string srv, fname;
             size_t orig;
-            auto plain = recover_from_peers(meta_path.string(), srv, fname, orig);
+            auto plain = recover_from_peers(meta_path.string(), srv, fname, orig, pass);
             if (plain.empty()) {
                 cout << "Recovery failed.\n";
                 return 1;
@@ -517,6 +566,19 @@ int main(int argc, char* argv[]) {
             return 0;
         }
 
+        bool has_pending = false;
+        for (auto& entry : fs::directory_iterator(pending)) {
+            if (entry.path().extension() == ".ecmeta") { has_pending = true; break; }
+        }
+        if (!has_pending) {
+            cout << "No pending files to sync.\n";
+            return 0;
+        }
+
+        cout << "Enter passphrase for decryption: ";
+        string pass;
+        getline(cin, pass);
+
         int synced = 0;
         for (auto& entry : fs::directory_iterator(pending)) {
             if (entry.path().extension() != ".ecmeta") continue;
@@ -528,7 +590,7 @@ int main(int argc, char* argv[]) {
             getline(peek, server_addr);
             peek.close();
 
-            cout << "Checking server " << server_addr << " for '" << entry.path().filename().string() << "'...\n";
+            cout << "Checking server " << server_addr << " for '" << entry.path().stem().string() << "'...\n";
 
             if (!ping_server(server_addr)) {
                 cout << "  Server still offline. Skipping.\n";
@@ -536,7 +598,7 @@ int main(int argc, char* argv[]) {
             }
 
             cout << "  Server is back online! Recovering from peers...\n";
-            auto plain = recover_from_peers(entry.path().string(), server_addr, filename, orig_size);
+            auto plain = recover_from_peers(entry.path().string(), server_addr, filename, orig_size, pass);
             if (plain.empty()) {
                 cout << "  Recovery failed. Skipping.\n";
                 continue;
@@ -556,6 +618,41 @@ int main(int argc, char* argv[]) {
             cout << "No files synced.\n";
         else
             cout << synced << " file(s) synced to server.\n";
+    }
+
+    else if (mode == "autosync") {
+        int interval = 30;
+        if (argc >= 3) interval = stoi(argv[2]);
+
+        cout << "Auto-sync daemon started. Checking every " << interval << " seconds...\n";
+
+        while (true) {
+            fs::path pending = fs::current_path() / "pending";
+            if (fs::exists(pending)) {
+                for (auto& entry : fs::directory_iterator(pending)) {
+                    if (entry.path().extension() != ".ecmeta") continue;
+
+                    string server_addr;
+                    ifstream peek(entry.path());
+                    getline(peek, server_addr);
+                    peek.close();
+
+                    if (!ping_server(server_addr)) continue;
+
+                    cout << "[autosync] Server " << server_addr << " is back online!\n";
+                    cout << "[autosync] Run './client sync' to enter passphrase and complete sync.\n";
+                }
+            }
+            sleep(interval);
+        }
+    }
+
+    else if (mode == "list") {
+        if (argc < 3) {
+            cout << "Usage: ./client list <server>\n";
+            return 1;
+        }
+        do_list(argv[2]);
     }
 
     return 0;
