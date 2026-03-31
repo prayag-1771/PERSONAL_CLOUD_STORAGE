@@ -10,19 +10,6 @@
 using namespace std;
 namespace fs = std::filesystem;
 
-/*
- PROTOCOL (FINAL):
-
- PUT <chunk_id> <size>\n
- <raw bytes>
-
- FETCH <chunk_id>\n
-
- RESPONSE (FETCH):
- <size>\n
- <raw bytes>
-*/
-
 static bool recv_all(int sock, void* buf, size_t size) {
     size_t got = 0;
     char* p = static_cast<char*>(buf);
@@ -53,14 +40,13 @@ int main(int argc, char* argv[]) {
 
     int port = stoi(argv[1]);
 
-    // Persistent storage path (absolute, deterministic)
-    fs::path storage =
-        fs::current_path() /
-        "storage" /
-        ("server_" + to_string(port)) /
-        "chunks";
+    fs::path chunk_storage =
+        fs::current_path() / "storage" / ("server_" + to_string(port)) / "chunks";
+    fs::create_directories(chunk_storage);
 
-    fs::create_directories(storage);
+    fs::path file_storage =
+        fs::current_path() / "storage" / ("server_" + to_string(port)) / "files";
+    fs::create_directories(file_storage);
 
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) {
@@ -87,13 +73,13 @@ int main(int argc, char* argv[]) {
     }
 
     cout << "[server] listening on port " << port << endl;
-    cout << "[server] storage: " << storage << endl;
+    cout << "[server] chunks: " << chunk_storage << endl;
+    cout << "[server] files:  " << file_storage << endl;
 
     while (true) {
         int client = accept(server_fd, nullptr, nullptr);
         if (client < 0) continue;
 
-        // Read command line
         string line;
         char ch;
         while (recv(client, &ch, 1, 0) == 1) {
@@ -101,11 +87,43 @@ int main(int argc, char* argv[]) {
             line.push_back(ch);
         }
 
-        if (line.rfind("PUT ", 0) == 0) {
-            // PUT <chunk_id> <size>
+        if (line == "PING") {
+            string resp = "PONG\n";
+            send_all(client, resp.c_str(), resp.size());
+            cout << "[server " << port << "] PING -> PONG" << endl;
+        }
+
+        else if (line.rfind("UPLOAD ", 0) == 0) {
+            string cmd, filename;
+            size_t size;
+            stringstream ss(line);
+            ss >> cmd >> filename >> size;
+
+            if (filename.empty() || size == 0) {
+                close(client);
+                continue;
+            }
+
+            vector<char> data(size);
+            if (!recv_all(client, data.data(), size)) {
+                close(client);
+                continue;
+            }
+
+            ofstream out(file_storage / filename, ios::binary);
+            out.write(data.data(), data.size());
+            out.close();
+
+            string resp = "OK\n";
+            send_all(client, resp.c_str(), resp.size());
+
+            cout << "[server " << port << "] stored file '"
+                 << filename << "' (" << size << " bytes)" << endl;
+        }
+
+        else if (line.rfind("PUT ", 0) == 0) {
             string cmd, chunk_id;
             size_t size;
-
             stringstream ss(line);
             ss >> cmd >> chunk_id >> size;
 
@@ -120,18 +138,17 @@ int main(int argc, char* argv[]) {
                 continue;
             }
 
-            ofstream out(storage / chunk_id, ios::binary);
+            ofstream out(chunk_storage / chunk_id, ios::binary);
             out.write(data.data(), data.size());
             out.close();
 
-            cout << "[server " << port << "] stored chunk " << chunk_id
-                 << " (" << size << " bytes)" << endl;
+            cout << "[server " << port << "] stored chunk "
+                 << chunk_id << " (" << size << " bytes)" << endl;
         }
 
         else if (line.rfind("FETCH ", 0) == 0) {
-            // FETCH <chunk_id>
             string chunk_id = line.substr(6);
-            fs::path file = storage / chunk_id;
+            fs::path file = chunk_storage / chunk_id;
 
             if (!fs::exists(file)) {
                 close(client);
@@ -149,6 +166,28 @@ int main(int argc, char* argv[]) {
             vector<char> buf(size);
             in.read(buf.data(), size);
             send_all(client, buf.data(), buf.size());
+        }
+
+        else if (line.rfind("DELETE ", 0) == 0) {
+            string chunk_id = line.substr(7);
+            fs::path file = chunk_storage / chunk_id;
+
+            if (fs::exists(file)) {
+                fs::remove(file);
+                cout << "[server " << port << "] deleted chunk " << chunk_id << endl;
+            }
+
+            string resp = "OK\n";
+            send_all(client, resp.c_str(), resp.size());
+        }
+
+        else if (line == "LIST") {
+            for (auto& entry : fs::directory_iterator(file_storage)) {
+                string name = entry.path().filename().string() + "\n";
+                send_all(client, name.c_str(), name.size());
+            }
+            string end = "END\n";
+            send_all(client, end.c_str(), end.size());
         }
 
         close(client);
