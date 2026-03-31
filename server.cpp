@@ -181,6 +181,31 @@ int main(int argc, char* argv[]) {
             send_all(client, resp.c_str(), resp.size());
         }
 
+        else if (line.rfind("FETCH_FILE ", 0) == 0) {
+            string fname = line.substr(11);
+            fs::path file = file_storage / fname;
+
+            if (!fs::exists(file)) {
+                close(client);
+                continue;
+            }
+
+            ifstream in(file, ios::binary);
+            in.seekg(0, ios::end);
+            size_t size = in.tellg();
+            in.seekg(0);
+
+            string header = to_string(size) + "\n";
+            send_all(client, header.c_str(), header.size());
+
+            vector<char> buf(size);
+            in.read(buf.data(), size);
+            send_all(client, buf.data(), buf.size());
+
+            cout << "[server " << port << "] served file '" << fname
+                 << "' (" << size << " bytes)" << endl;
+        }
+
         else if (line == "LIST") {
             for (auto& entry : fs::directory_iterator(file_storage)) {
                 string name = entry.path().filename().string() + "\n";
