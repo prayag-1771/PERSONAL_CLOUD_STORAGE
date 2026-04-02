@@ -5,11 +5,31 @@ storage/
 # Binaries
 client
 server
+*.o
 
 # Metadata / runtime files
 *.ecmeta
 *.bin
-*.txt
+pending/
+
+# Test / scratch files
+a.txt
+b.txt
+c.txt
+secret.txt
+test.txt
+
+# Prototype directories
+phase9/
+phase10/
+phase11/
+data/
+
+# TLS certs (auto-generated)
+*.crt
+*.key
+auth.token
 
 # OS noise
 .DS_Store
+Thumbs.db
