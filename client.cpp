@@ -20,6 +20,17 @@ namespace fs = std::filesystem;
 static string auth_token;
 static SSL_CTX* ssl_ctx = nullptr;
 
+static void print_progress(size_t done, size_t total) {
+    int pct = total > 0 ? (int)(done * 100 / total) : 100;
+    int bar_width = 30;
+    int filled = bar_width * pct / 100;
+    cout << "\r  [";
+    for (int i = 0; i < bar_width; i++)
+        cout << (i < filled ? '#' : '.');
+    cout << "] " << pct << "% (" << done / 1024 << "/" << total / 1024 << " KB)" << flush;
+    if (done >= total) cout << endl;
+}
+
 struct TLSConn {
     int fd = -1;
     SSL* ssl = nullptr;
@@ -269,7 +280,18 @@ static bool upload_direct(const string& addr, const string& filename,
     string header = "UPLOAD " + filename + " " + to_string(cipher.size()) +
                     " " + bytes_to_hex(session_key) + " " + bytes_to_hex(iv) + "\n";
     if (!ssl_send_all(c.ssl, header.c_str(), header.size())) { c.close_conn(); return false; }
-    if (!ssl_send_all(c.ssl, cipher.data(), cipher.size())) { c.close_conn(); return false; }
+
+    // Send cipher data with progress
+    size_t total = cipher.size();
+    size_t sent = 0;
+    size_t chunk_size = 64 * 1024;
+    while (sent < total) {
+        size_t to_send = min(chunk_size, total - sent);
+        int s = SSL_write(c.ssl, cipher.data() + sent, to_send);
+        if (s <= 0) { c.close_conn(); return false; }
+        sent += s;
+        print_progress(sent, total);
+    }
 
     string line;
     char ch;
@@ -643,10 +665,17 @@ int main(int argc, char* argv[]) {
 
             size_t size = stoul(line);
             vector<uint8_t> filedata(size);
-            if (!ssl_recv_all(c.ssl, filedata.data(), size)) {
-                cout << "Download failed\n";
-                c.close_conn();
-                return 1;
+            size_t got = 0;
+            while (got < size) {
+                size_t to_read = min((size_t)(64 * 1024), size - got);
+                int r = SSL_read(c.ssl, filedata.data() + got, to_read);
+                if (r <= 0) {
+                    cout << "\nDownload failed\n";
+                    c.close_conn();
+                    return 1;
+                }
+                got += r;
+                print_progress(got, size);
             }
             c.close_conn();
 
