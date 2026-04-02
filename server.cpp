@@ -4,12 +4,42 @@
 #include <vector>
 #include <string>
 #include <sstream>
+#include <cstdlib>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <openssl/evp.h>
+#include <openssl/rand.h>
 
 using namespace std;
 namespace fs = std::filesystem;
+
+static string generate_token() {
+    vector<uint8_t> buf(32);
+    RAND_bytes(buf.data(), 32);
+    string token;
+    for (uint8_t b : buf) {
+        char hex[3];
+        snprintf(hex, sizeof(hex), "%02x", b);
+        token += hex;
+    }
+    return token;
+}
+
+static string load_or_create_token(const fs::path& token_path) {
+    if (fs::exists(token_path)) {
+        ifstream in(token_path);
+        string token;
+        getline(in, token);
+        if (!token.empty()) return token;
+    }
+    string token = generate_token();
+    ofstream out(token_path);
+    out << token << "\n";
+    out.close();
+    return token;
+}
+
+static string server_token;
 
 static bool recv_all(int sock, void* buf, size_t size) {
     size_t got = 0;
@@ -71,13 +101,19 @@ int main(int argc, char* argv[]) {
 
     int port = stoi(argv[1]);
 
-    fs::path chunk_storage =
-        fs::current_path() / "storage" / ("server_" + to_string(port)) / "chunks";
+    fs::path server_dir = fs::current_path() / "storage" / ("server_" + to_string(port));
+    fs::create_directories(server_dir);
+
+    fs::path chunk_storage = server_dir / "chunks";
     fs::create_directories(chunk_storage);
 
-    fs::path file_storage =
-        fs::current_path() / "storage" / ("server_" + to_string(port)) / "files";
+    fs::path file_storage = server_dir / "files";
     fs::create_directories(file_storage);
+
+    fs::path token_path = server_dir / "auth.token";
+    server_token = load_or_create_token(token_path);
+    cout << "[server] auth token: " << server_token << endl;
+    cout << "[server] (save this token — clients need it to connect)" << endl;
 
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) {
@@ -111,8 +147,34 @@ int main(int argc, char* argv[]) {
         int client = accept(server_fd, nullptr, nullptr);
         if (client < 0) continue;
 
-        string line;
+        // Read first line: must be AUTH <token> (except PING which is unauthenticated)
+        string auth_line;
         char ch;
+        while (recv(client, &ch, 1, 0) == 1) {
+            if (ch == '\n') break;
+            auth_line.push_back(ch);
+        }
+
+        // PING is unauthenticated (health check)
+        if (auth_line == "PING") {
+            string resp = "PONG\n";
+            send_all(client, resp.c_str(), resp.size());
+            cout << "[server " << port << "] PING -> PONG" << endl;
+            close(client);
+            continue;
+        }
+
+        // All other commands require AUTH
+        if (auth_line.rfind("AUTH ", 0) != 0 || auth_line.substr(5) != server_token) {
+            string resp = "AUTH_FAILED\n";
+            send_all(client, resp.c_str(), resp.size());
+            cout << "[server " << port << "] auth failed" << endl;
+            close(client);
+            continue;
+        }
+
+        // Read the actual command
+        string line;
         while (recv(client, &ch, 1, 0) == 1) {
             if (ch == '\n') break;
             line.push_back(ch);

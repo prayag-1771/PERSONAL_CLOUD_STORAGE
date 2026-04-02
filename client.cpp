@@ -14,6 +14,8 @@
 using namespace std;
 namespace fs = std::filesystem;
 
+static string auth_token;
+
 static bool send_all(int sock, const void* buf, size_t size) {
     size_t sent = 0;
     const char* p = (const char*)buf;
@@ -171,6 +173,12 @@ static bool ping_server(const string& addr) {
     return line == "PONG";
 }
 
+static bool send_auth(int sock) {
+    if (auth_token.empty()) return true;
+    string auth = "AUTH " + auth_token + "\n";
+    return send_all(sock, auth.c_str(), auth.size());
+}
+
 static bool upload_direct(const string& addr, const string& filename,
                           const vector<uint8_t>& data) {
     vector<uint8_t> session_key(32);
@@ -181,6 +189,7 @@ static bool upload_direct(const string& addr, const string& filename,
 
     int s = connect_to(addr);
     if (s < 0) return false;
+    if (!send_auth(s)) { close(s); return false; }
 
     string header = "UPLOAD " + filename + " " + to_string(cipher.size()) +
                     " " + bytes_to_hex(session_key) + " " + bytes_to_hex(iv) + "\n";
@@ -193,6 +202,10 @@ static bool upload_direct(const string& addr, const string& filename,
         line.push_back(ch);
 
     close(s);
+    if (line == "AUTH_FAILED") {
+        cout << "Authentication failed. Check your token.\n";
+        return false;
+    }
     return line == "OK";
 }
 
@@ -200,6 +213,7 @@ static bool put_chunk(const string& addr, const string& id,
                       const vector<uint8_t>& data) {
     int s = connect_to(addr);
     if (s < 0) return false;
+    if (!send_auth(s)) { close(s); return false; }
 
     string header = "PUT " + id + " " + to_string(data.size()) + "\n";
     if (!send_all(s, header.c_str(), header.size())) { close(s); return false; }
@@ -212,6 +226,7 @@ static bool fetch_chunk(const string& addr, const string& id,
                         vector<uint8_t>& out) {
     int s = connect_to(addr);
     if (s < 0) return false;
+    if (!send_auth(s)) { close(s); return false; }
 
     string req = "FETCH " + id + "\n";
     send_all(s, req.c_str(), req.size());
@@ -233,6 +248,7 @@ static bool fetch_chunk(const string& addr, const string& id,
 static bool delete_chunk(const string& addr, const string& id) {
     int s = connect_to(addr);
     if (s < 0) return false;
+    if (!send_auth(s)) { close(s); return false; }
 
     string req = "DELETE " + id + "\n";
     send_all(s, req.c_str(), req.size());
@@ -410,6 +426,7 @@ static void do_list(const string& server) {
         cout << "Cannot connect to server\n";
         return;
     }
+    if (!send_auth(s)) { close(s); return; }
 
     string req = "LIST\n";
     send_all(s, req.c_str(), req.size());
@@ -430,24 +447,36 @@ static void do_list(const string& server) {
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         cout << "Usage:\n";
-        cout << "  ./client upload <file> <server> [peer1 peer2 peer3 peer4]\n";
-        cout << "  ./client download <file> <server>\n";
-        cout << "  ./client sync\n";
-        cout << "  ./client autosync <interval_seconds>\n";
-        cout << "  ./client list <server>\n";
+        cout << "  ./client --token <token> upload <file> <server> [peer1 peer2 peer3 peer4]\n";
+        cout << "  ./client --token <token> download <file> <server>\n";
+        cout << "  ./client --token <token> sync\n";
+        cout << "  ./client --token <token> autosync <interval_seconds>\n";
+        cout << "  ./client --token <token> list <server>\n";
         return 1;
     }
 
-    string mode = argv[1];
+    // Parse --token flag
+    int arg_offset = 1;
+    if (string(argv[1]) == "--token" && argc >= 3) {
+        auth_token = argv[2];
+        arg_offset = 3;
+    }
+
+    if (arg_offset >= argc) {
+        cout << "No command specified.\n";
+        return 1;
+    }
+
+    string mode = argv[arg_offset];
 
     if (mode == "upload") {
-        if (argc < 4) {
-            cout << "Usage: ./client upload <file> <server> [peer1 peer2 peer3 peer4]\n";
+        if (argc < arg_offset + 3) {
+            cout << "Usage: ./client --token <token> upload <file> <server> [peer1 peer2 peer3 peer4]\n";
             return 1;
         }
 
-        string file = argv[2];
-        string server = argv[3];
+        string file = argv[arg_offset + 1];
+        string server = argv[arg_offset + 2];
 
         ifstream in(file, ios::binary);
         if (!in) {
@@ -472,9 +501,9 @@ int main(int argc, char* argv[]) {
         } else {
             cout << "Server is offline. Falling back to peer distribution...\n";
 
-            if (argc < 8) {
+            if (argc < arg_offset + 7) {
                 cout << "Need 4 peer addresses for fallback.\n";
-                cout << "Usage: ./client upload <file> <server> <peer1> <peer2> <peer3> <peer4>\n";
+                cout << "Usage: ./client --token <token> upload <file> <server> <peer1> <peer2> <peer3> <peer4>\n";
                 return 1;
             }
 
@@ -482,19 +511,20 @@ int main(int argc, char* argv[]) {
             string pass;
             getline(cin, pass);
 
-            vector<string> peers = {argv[4], argv[5], argv[6], argv[7]};
+            vector<string> peers = {argv[arg_offset + 3], argv[arg_offset + 4],
+                                    argv[arg_offset + 5], argv[arg_offset + 6]};
             do_erasure_upload(file, server, peers, pass);
         }
     }
 
     else if (mode == "download") {
-        if (argc < 4) {
-            cout << "Usage: ./client download <file> <server>\n";
+        if (argc < arg_offset + 3) {
+            cout << "Usage: ./client --token <token> download <file> <server>\n";
             return 1;
         }
 
-        string file = argv[2];
-        string server = argv[3];
+        string file = argv[arg_offset + 1];
+        string server = argv[arg_offset + 2];
         string basename = fs::path(file).filename().string();
 
         if (ping_server(server)) {
@@ -505,6 +535,7 @@ int main(int argc, char* argv[]) {
                 cout << "Connection failed\n";
                 return 1;
             }
+            if (!send_auth(s)) { close(s); return 1; }
 
             string req = "FETCH_FILE " + basename + "\n";
             send_all(s, req.c_str(), req.size());
@@ -622,7 +653,7 @@ int main(int argc, char* argv[]) {
 
     else if (mode == "autosync") {
         int interval = 30;
-        if (argc >= 3) interval = stoi(argv[2]);
+        if (argc > arg_offset + 1) interval = stoi(argv[arg_offset + 1]);
 
         cout << "Auto-sync daemon started. Checking every " << interval << " seconds...\n";
 
@@ -648,11 +679,11 @@ int main(int argc, char* argv[]) {
     }
 
     else if (mode == "list") {
-        if (argc < 3) {
-            cout << "Usage: ./client list <server>\n";
+        if (argc < arg_offset + 2) {
+            cout << "Usage: ./client --token <token> list <server>\n";
             return 1;
         }
-        do_list(argv[2]);
+        do_list(argv[arg_offset + 1]);
     }
 
     return 0;
