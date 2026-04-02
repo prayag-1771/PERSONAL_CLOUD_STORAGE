@@ -5,6 +5,8 @@
 #include <string>
 #include <sstream>
 #include <cstdlib>
+#include <thread>
+#include <mutex>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <openssl/evp.h>
@@ -40,6 +42,7 @@ static string load_or_create_token(const fs::path& token_path) {
 }
 
 static string server_token;
+static mutex fs_mutex;
 
 static bool is_safe_name(const string& name) {
     if (name.empty()) return false;
@@ -152,10 +155,7 @@ int main(int argc, char* argv[]) {
     cout << "[server] chunks: " << chunk_storage << endl;
     cout << "[server] files:  " << file_storage << endl;
 
-    while (true) {
-        int client = accept(server_fd, nullptr, nullptr);
-        if (client < 0) continue;
-
+    auto handle_client = [&](int client) {
         // Read first line: must be AUTH <token> (except PING which is unauthenticated)
         string auth_line;
         char ch;
@@ -170,7 +170,7 @@ int main(int argc, char* argv[]) {
             send_all(client, resp.c_str(), resp.size());
             cout << "[server " << port << "] PING -> PONG" << endl;
             close(client);
-            continue;
+            return;
         }
 
         // All other commands require AUTH
@@ -179,7 +179,7 @@ int main(int argc, char* argv[]) {
             send_all(client, resp.c_str(), resp.size());
             cout << "[server " << port << "] auth failed" << endl;
             close(client);
-            continue;
+            return;
         }
 
         // Read the actual command
@@ -203,13 +203,13 @@ int main(int argc, char* argv[]) {
 
             if (filename.empty() || cipher_size == 0 || !is_safe_name(filename)) {
                 close(client);
-                continue;
+                return;
             }
 
             vector<char> raw(cipher_size);
             if (!recv_all(client, raw.data(), cipher_size)) {
                 close(client);
-                continue;
+                return;
             }
 
             vector<uint8_t> cipher_data(raw.begin(), raw.end());
@@ -217,9 +217,12 @@ int main(int argc, char* argv[]) {
             auto iv = hex_to_bytes(iv_hex);
             auto plain = aes_decrypt(cipher_data, key, iv);
 
-            ofstream out(file_storage / filename, ios::binary);
-            out.write((char*)plain.data(), plain.size());
-            out.close();
+            {
+                lock_guard<mutex> lock(fs_mutex);
+                ofstream out(file_storage / filename, ios::binary);
+                out.write((char*)plain.data(), plain.size());
+                out.close();
+            }
 
             string resp = "OK\n";
             send_all(client, resp.c_str(), resp.size());
@@ -236,18 +239,21 @@ int main(int argc, char* argv[]) {
 
             if (chunk_id.empty() || size == 0 || !is_safe_name(chunk_id)) {
                 close(client);
-                continue;
+                return;
             }
 
             vector<char> data(size);
             if (!recv_all(client, data.data(), size)) {
                 close(client);
-                continue;
+                return;
             }
 
-            ofstream out(chunk_storage / chunk_id, ios::binary);
-            out.write(data.data(), data.size());
-            out.close();
+            {
+                lock_guard<mutex> lock(fs_mutex);
+                ofstream out(chunk_storage / chunk_id, ios::binary);
+                out.write(data.data(), data.size());
+                out.close();
+            }
 
             cout << "[server " << port << "] stored chunk "
                  << chunk_id << " (" << size << " bytes)" << endl;
@@ -255,12 +261,14 @@ int main(int argc, char* argv[]) {
 
         else if (line.rfind("FETCH ", 0) == 0) {
             string chunk_id = line.substr(6);
-            if (!is_safe_name(chunk_id)) { close(client); continue; }
+            if (!is_safe_name(chunk_id)) { close(client); return; }
+
+            lock_guard<mutex> lock(fs_mutex);
             fs::path file = chunk_storage / chunk_id;
 
             if (!fs::exists(file)) {
                 close(client);
-                continue;
+                return;
             }
 
             ifstream in(file, ios::binary);
@@ -278,7 +286,9 @@ int main(int argc, char* argv[]) {
 
         else if (line.rfind("DELETE ", 0) == 0) {
             string chunk_id = line.substr(7);
-            if (!is_safe_name(chunk_id)) { close(client); continue; }
+            if (!is_safe_name(chunk_id)) { close(client); return; }
+
+            lock_guard<mutex> lock(fs_mutex);
             fs::path file = chunk_storage / chunk_id;
 
             if (fs::exists(file)) {
@@ -292,12 +302,14 @@ int main(int argc, char* argv[]) {
 
         else if (line.rfind("FETCH_FILE ", 0) == 0) {
             string fname = line.substr(11);
-            if (!is_safe_name(fname)) { close(client); continue; }
+            if (!is_safe_name(fname)) { close(client); return; }
+
+            lock_guard<mutex> lock(fs_mutex);
             fs::path file = file_storage / fname;
 
             if (!fs::exists(file)) {
                 close(client);
-                continue;
+                return;
             }
 
             ifstream in(file, ios::binary);
@@ -317,6 +329,7 @@ int main(int argc, char* argv[]) {
         }
 
         else if (line == "LIST") {
+            lock_guard<mutex> lock(fs_mutex);
             for (auto& entry : fs::directory_iterator(file_storage)) {
                 string name = entry.path().filename().string() + "\n";
                 send_all(client, name.c_str(), name.size());
@@ -326,5 +339,11 @@ int main(int argc, char* argv[]) {
         }
 
         close(client);
+    };
+
+    while (true) {
+        int client = accept(server_fd, nullptr, nullptr);
+        if (client < 0) continue;
+        thread(handle_client, client).detach();
     }
 }
