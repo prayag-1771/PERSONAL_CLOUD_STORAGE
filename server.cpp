@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+#include <openssl/sha.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <openssl/x509.h>
@@ -81,6 +82,25 @@ static void generate_self_signed_cert(const fs::path& cert_path, const fs::path&
 
 static string server_token;
 static mutex fs_mutex;
+
+static string sha256_file(const fs::path& path) {
+    ifstream in(path, ios::binary);
+    if (!in) return "";
+    SHA256_CTX ctx;
+    SHA256_Init(&ctx);
+    char buf[8192];
+    while (in.read(buf, sizeof(buf)) || in.gcount() > 0)
+        SHA256_Update(&ctx, buf, in.gcount());
+    unsigned char hash[32];
+    SHA256_Final(hash, &ctx);
+    string hex;
+    for (int i = 0; i < 32; i++) {
+        char h[3];
+        snprintf(h, sizeof(h), "%02x", hash[i]);
+        hex += h;
+    }
+    return hex;
+}
 
 static bool is_safe_name(const string& name) {
     if (name.empty()) return false;
@@ -418,6 +438,29 @@ int main(int argc, char* argv[]) {
 
             cout << "[server " << port << "] served file '" << fname
                  << "' (" << size << " bytes)" << endl;
+        }
+
+        else if (line.rfind("CHECK_HASH ", 0) == 0) {
+            // CHECK_HASH <filename> <sha256_hex>
+            string cmd, fname, client_hash;
+            stringstream ss(line);
+            ss >> cmd >> fname >> client_hash;
+
+            if (!is_safe_name(fname)) {
+                string resp = "ERROR\n";
+                ssl_send_all(ssl, resp.c_str(), resp.size());
+            } else {
+                lock_guard<mutex> lock(fs_mutex);
+                fs::path file = file_storage / fname;
+                if (fs::exists(file) && sha256_file(file) == client_hash) {
+                    string resp = "EXISTS\n";
+                    ssl_send_all(ssl, resp.c_str(), resp.size());
+                    cout << "[server " << port << "] dedup: '" << fname << "' already exists" << endl;
+                } else {
+                    string resp = "SEND\n";
+                    ssl_send_all(ssl, resp.c_str(), resp.size());
+                }
+            }
         }
 
         else if (line == "LIST") {

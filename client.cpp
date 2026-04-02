@@ -230,8 +230,32 @@ static bool send_auth(SSL* ssl) {
     return ssl_send_all(ssl, auth.c_str(), auth.size());
 }
 
+static bool check_dedup(const string& addr, const string& filename,
+                        const vector<uint8_t>& data) {
+    string hash = sha256_hex(data);
+    TLSConn c = tls_connect(addr);
+    if (!c.ssl) return false;
+    if (!send_auth(c.ssl)) { c.close_conn(); return false; }
+
+    string req = "CHECK_HASH " + filename + " " + hash + "\n";
+    ssl_send_all(c.ssl, req.c_str(), req.size());
+
+    string line;
+    char ch;
+    while (SSL_read(c.ssl, &ch, 1) == 1 && ch != '\n')
+        line.push_back(ch);
+    c.close_conn();
+    return line == "EXISTS";
+}
+
 static bool upload_direct(const string& addr, const string& filename,
                           const vector<uint8_t>& data) {
+    // Check if file already exists with same content
+    if (check_dedup(addr, filename, data)) {
+        cout << "File already exists on server (identical content). Skipping upload.\n";
+        return true;
+    }
+
     vector<uint8_t> session_key(32);
     RAND_bytes(session_key.data(), 32);
 
