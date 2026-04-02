@@ -111,36 +111,52 @@ static vector<uint8_t> derive_key(const string& pass) {
 static vector<uint8_t> aes_encrypt(const vector<uint8_t>& plain,
                                    const vector<uint8_t>& key,
                                    vector<uint8_t>& iv_out) {
-    iv_out.resize(16);
-    RAND_bytes(iv_out.data(), 16);
+    iv_out.resize(12);
+    RAND_bytes(iv_out.data(), 12);
 
     EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
     vector<uint8_t> out(plain.size() + 16);
     int len1, len2;
 
-    EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), nullptr,
-                       key.data(), iv_out.data());
-    EVP_EncryptUpdate(ctx, out.data(), &len1,
-                      plain.data(), plain.size());
+    EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr);
+    EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, 12, nullptr);
+    EVP_EncryptInit_ex(ctx, nullptr, nullptr, key.data(), iv_out.data());
+    EVP_EncryptUpdate(ctx, out.data(), &len1, plain.data(), plain.size());
     EVP_EncryptFinal_ex(ctx, out.data() + len1, &len2);
+
+    int cipher_len = len1 + len2;
+    // Append 16-byte GCM auth tag
+    EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, 16, out.data() + cipher_len);
     EVP_CIPHER_CTX_free(ctx);
 
-    out.resize(len1 + len2);
+    out.resize(cipher_len + 16);
     return out;
 }
 
 static vector<uint8_t> aes_decrypt(const vector<uint8_t>& cipher,
                                    const vector<uint8_t>& key,
                                    const vector<uint8_t>& iv) {
+    if (cipher.size() < 16) return {};
+
+    size_t data_len = cipher.size() - 16;
     EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
-    vector<uint8_t> out(cipher.size());
+    vector<uint8_t> out(data_len);
     int len1, len2;
 
-    EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), nullptr,
-                       key.data(), iv.data());
-    EVP_DecryptUpdate(ctx, out.data(), &len1,
-                      cipher.data(), cipher.size());
-    EVP_DecryptFinal_ex(ctx, out.data() + len1, &len2);
+    EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr);
+    EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, 12, nullptr);
+    EVP_DecryptInit_ex(ctx, nullptr, nullptr, key.data(), iv.data());
+    EVP_DecryptUpdate(ctx, out.data(), &len1, cipher.data(), data_len);
+
+    // Set expected auth tag
+    EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, 16,
+                        (void*)(cipher.data() + data_len));
+
+    if (EVP_DecryptFinal_ex(ctx, out.data() + len1, &len2) <= 0) {
+        EVP_CIPHER_CTX_free(ctx);
+        cout << "Decryption failed: authentication tag mismatch (wrong key or corrupted data)\n";
+        return {};
+    }
     EVP_CIPHER_CTX_free(ctx);
 
     out.resize(len1 + len2);

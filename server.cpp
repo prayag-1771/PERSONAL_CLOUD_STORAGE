@@ -130,13 +130,25 @@ static vector<uint8_t> hex_to_bytes(const string& hex) {
 static vector<uint8_t> aes_decrypt(const vector<uint8_t>& cipher,
                                    const vector<uint8_t>& key,
                                    const vector<uint8_t>& iv) {
+    if (cipher.size() < 16) return {};
+
+    size_t data_len = cipher.size() - 16;
     EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
-    vector<uint8_t> out(cipher.size());
+    vector<uint8_t> out(data_len);
     int len1, len2;
 
-    EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), nullptr, key.data(), iv.data());
-    EVP_DecryptUpdate(ctx, out.data(), &len1, cipher.data(), cipher.size());
-    EVP_DecryptFinal_ex(ctx, out.data() + len1, &len2);
+    EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr);
+    EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, 12, nullptr);
+    EVP_DecryptInit_ex(ctx, nullptr, nullptr, key.data(), iv.data());
+    EVP_DecryptUpdate(ctx, out.data(), &len1, cipher.data(), data_len);
+
+    EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, 16,
+                        (void*)(cipher.data() + data_len));
+
+    if (EVP_DecryptFinal_ex(ctx, out.data() + len1, &len2) <= 0) {
+        EVP_CIPHER_CTX_free(ctx);
+        return {};
+    }
     EVP_CIPHER_CTX_free(ctx);
 
     out.resize(len1 + len2);
