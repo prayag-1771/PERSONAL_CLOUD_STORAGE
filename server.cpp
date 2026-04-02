@@ -11,6 +11,10 @@
 #include <unistd.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#include <openssl/x509.h>
+#include <openssl/pem.h>
 
 using namespace std;
 namespace fs = std::filesystem;
@@ -41,6 +45,40 @@ static string load_or_create_token(const fs::path& token_path) {
     return token;
 }
 
+static void generate_self_signed_cert(const fs::path& cert_path, const fs::path& key_path) {
+    EVP_PKEY* pkey = EVP_PKEY_new();
+    EVP_PKEY_CTX* pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, nullptr);
+    EVP_PKEY_keygen_init(pctx);
+    EVP_PKEY_CTX_set_rsa_keygen_bits(pctx, 2048);
+    EVP_PKEY_keygen(pctx, &pkey);
+    EVP_PKEY_CTX_free(pctx);
+
+    X509* x509 = X509_new();
+    ASN1_INTEGER_set(X509_get_serialNumber(x509), 1);
+    X509_gmtime_adj(X509_get_notBefore(x509), 0);
+    X509_gmtime_adj(X509_get_notAfter(x509), 365 * 24 * 3600);
+    X509_set_pubkey(x509, pkey);
+
+    X509_NAME* name = X509_get_subject_name(x509);
+    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
+                               (unsigned char*)"PersonalCloud", -1, -1, 0);
+    X509_set_issuer_name(x509, name);
+    X509_sign(x509, pkey, EVP_sha256());
+
+    FILE* f = fopen(cert_path.string().c_str(), "wb");
+    PEM_write_X509(f, x509);
+    fclose(f);
+
+    f = fopen(key_path.string().c_str(), "wb");
+    PEM_write_PrivateKey(f, pkey, nullptr, nullptr, 0, nullptr, nullptr);
+    fclose(f);
+
+    X509_free(x509);
+    EVP_PKEY_free(pkey);
+
+    cout << "[server] generated self-signed TLS certificate" << endl;
+}
+
 static string server_token;
 static mutex fs_mutex;
 
@@ -53,22 +91,22 @@ static bool is_safe_name(const string& name) {
     return true;
 }
 
-static bool recv_all(int sock, void* buf, size_t size) {
+static bool ssl_recv_all(SSL* ssl, void* buf, size_t size) {
     size_t got = 0;
     char* p = static_cast<char*>(buf);
     while (got < size) {
-        ssize_t r = recv(sock, p + got, size - got, 0);
+        int r = SSL_read(ssl, p + got, size - got);
         if (r <= 0) return false;
         got += r;
     }
     return true;
 }
 
-static bool send_all(int sock, const void* buf, size_t size) {
+static bool ssl_send_all(SSL* ssl, const void* buf, size_t size) {
     size_t sent = 0;
     const char* p = static_cast<const char*>(buf);
     while (sent < size) {
-        ssize_t s = send(sock, p + sent, size - sent, 0);
+        int s = SSL_write(ssl, p + sent, size - sent);
         if (s <= 0) return false;
         sent += s;
     }
@@ -127,6 +165,23 @@ int main(int argc, char* argv[]) {
     cout << "[server] auth token: " << server_token << endl;
     cout << "[server] (save this token — clients need it to connect)" << endl;
 
+    // TLS setup
+    fs::path cert_path = server_dir / "server.crt";
+    fs::path key_path = server_dir / "server.key";
+    if (!fs::exists(cert_path) || !fs::exists(key_path))
+        generate_self_signed_cert(cert_path, key_path);
+
+    SSL_CTX* ssl_ctx = SSL_CTX_new(TLS_server_method());
+    if (!ssl_ctx) {
+        cerr << "Failed to create SSL context\n";
+        return 1;
+    }
+    if (SSL_CTX_use_certificate_file(ssl_ctx, cert_path.string().c_str(), SSL_FILETYPE_PEM) <= 0 ||
+        SSL_CTX_use_PrivateKey_file(ssl_ctx, key_path.string().c_str(), SSL_FILETYPE_PEM) <= 0) {
+        cerr << "Failed to load TLS certificate/key\n";
+        return 1;
+    }
+
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) {
         perror("socket");
@@ -151,15 +206,24 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    cout << "[server] listening on port " << port << endl;
+    cout << "[server] listening on port " << port << " (TLS)" << endl;
     cout << "[server] chunks: " << chunk_storage << endl;
     cout << "[server] files:  " << file_storage << endl;
 
-    auto handle_client = [&](int client) {
-        // Read first line: must be AUTH <token> (except PING which is unauthenticated)
+    auto handle_client = [&](int client_fd) {
+        SSL* ssl = SSL_new(ssl_ctx);
+        SSL_set_fd(ssl, client_fd);
+
+        if (SSL_accept(ssl) <= 0) {
+            SSL_free(ssl);
+            close(client_fd);
+            return;
+        }
+
+        // Read first line: AUTH or PING
         string auth_line;
         char ch;
-        while (recv(client, &ch, 1, 0) == 1) {
+        while (SSL_read(ssl, &ch, 1) == 1) {
             if (ch == '\n') break;
             auth_line.push_back(ch);
         }
@@ -167,31 +231,35 @@ int main(int argc, char* argv[]) {
         // PING is unauthenticated (health check)
         if (auth_line == "PING") {
             string resp = "PONG\n";
-            send_all(client, resp.c_str(), resp.size());
+            ssl_send_all(ssl, resp.c_str(), resp.size());
             cout << "[server " << port << "] PING -> PONG" << endl;
-            close(client);
+            SSL_shutdown(ssl);
+            SSL_free(ssl);
+            close(client_fd);
             return;
         }
 
         // All other commands require AUTH
         if (auth_line.rfind("AUTH ", 0) != 0 || auth_line.substr(5) != server_token) {
             string resp = "AUTH_FAILED\n";
-            send_all(client, resp.c_str(), resp.size());
+            ssl_send_all(ssl, resp.c_str(), resp.size());
             cout << "[server " << port << "] auth failed" << endl;
-            close(client);
+            SSL_shutdown(ssl);
+            SSL_free(ssl);
+            close(client_fd);
             return;
         }
 
         // Read the actual command
         string line;
-        while (recv(client, &ch, 1, 0) == 1) {
+        while (SSL_read(ssl, &ch, 1) == 1) {
             if (ch == '\n') break;
             line.push_back(ch);
         }
 
         if (line == "PING") {
             string resp = "PONG\n";
-            send_all(client, resp.c_str(), resp.size());
+            ssl_send_all(ssl, resp.c_str(), resp.size());
             cout << "[server " << port << "] PING -> PONG" << endl;
         }
 
@@ -202,13 +270,17 @@ int main(int argc, char* argv[]) {
             ss >> cmd >> filename >> cipher_size >> key_hex >> iv_hex;
 
             if (filename.empty() || cipher_size == 0 || !is_safe_name(filename)) {
-                close(client);
+                SSL_shutdown(ssl);
+                SSL_free(ssl);
+                close(client_fd);
                 return;
             }
 
             vector<char> raw(cipher_size);
-            if (!recv_all(client, raw.data(), cipher_size)) {
-                close(client);
+            if (!ssl_recv_all(ssl, raw.data(), cipher_size)) {
+                SSL_shutdown(ssl);
+                SSL_free(ssl);
+                close(client_fd);
                 return;
             }
 
@@ -225,7 +297,7 @@ int main(int argc, char* argv[]) {
             }
 
             string resp = "OK\n";
-            send_all(client, resp.c_str(), resp.size());
+            ssl_send_all(ssl, resp.c_str(), resp.size());
 
             cout << "[server " << port << "] stored file '"
                  << filename << "' (" << plain.size() << " bytes, decrypted)" << endl;
@@ -238,13 +310,17 @@ int main(int argc, char* argv[]) {
             ss >> cmd >> chunk_id >> size;
 
             if (chunk_id.empty() || size == 0 || !is_safe_name(chunk_id)) {
-                close(client);
+                SSL_shutdown(ssl);
+                SSL_free(ssl);
+                close(client_fd);
                 return;
             }
 
             vector<char> data(size);
-            if (!recv_all(client, data.data(), size)) {
-                close(client);
+            if (!ssl_recv_all(ssl, data.data(), size)) {
+                SSL_shutdown(ssl);
+                SSL_free(ssl);
+                close(client_fd);
                 return;
             }
 
@@ -261,14 +337,15 @@ int main(int argc, char* argv[]) {
 
         else if (line.rfind("FETCH ", 0) == 0) {
             string chunk_id = line.substr(6);
-            if (!is_safe_name(chunk_id)) { close(client); return; }
+            if (!is_safe_name(chunk_id)) {
+                SSL_shutdown(ssl); SSL_free(ssl); close(client_fd); return;
+            }
 
             lock_guard<mutex> lock(fs_mutex);
             fs::path file = chunk_storage / chunk_id;
 
             if (!fs::exists(file)) {
-                close(client);
-                return;
+                SSL_shutdown(ssl); SSL_free(ssl); close(client_fd); return;
             }
 
             ifstream in(file, ios::binary);
@@ -277,16 +354,18 @@ int main(int argc, char* argv[]) {
             in.seekg(0);
 
             string header = to_string(size) + "\n";
-            send_all(client, header.c_str(), header.size());
+            ssl_send_all(ssl, header.c_str(), header.size());
 
             vector<char> buf(size);
             in.read(buf.data(), size);
-            send_all(client, buf.data(), buf.size());
+            ssl_send_all(ssl, buf.data(), buf.size());
         }
 
         else if (line.rfind("DELETE ", 0) == 0) {
             string chunk_id = line.substr(7);
-            if (!is_safe_name(chunk_id)) { close(client); return; }
+            if (!is_safe_name(chunk_id)) {
+                SSL_shutdown(ssl); SSL_free(ssl); close(client_fd); return;
+            }
 
             lock_guard<mutex> lock(fs_mutex);
             fs::path file = chunk_storage / chunk_id;
@@ -297,19 +376,20 @@ int main(int argc, char* argv[]) {
             }
 
             string resp = "OK\n";
-            send_all(client, resp.c_str(), resp.size());
+            ssl_send_all(ssl, resp.c_str(), resp.size());
         }
 
         else if (line.rfind("FETCH_FILE ", 0) == 0) {
             string fname = line.substr(11);
-            if (!is_safe_name(fname)) { close(client); return; }
+            if (!is_safe_name(fname)) {
+                SSL_shutdown(ssl); SSL_free(ssl); close(client_fd); return;
+            }
 
             lock_guard<mutex> lock(fs_mutex);
             fs::path file = file_storage / fname;
 
             if (!fs::exists(file)) {
-                close(client);
-                return;
+                SSL_shutdown(ssl); SSL_free(ssl); close(client_fd); return;
             }
 
             ifstream in(file, ios::binary);
@@ -318,11 +398,11 @@ int main(int argc, char* argv[]) {
             in.seekg(0);
 
             string header = to_string(size) + "\n";
-            send_all(client, header.c_str(), header.size());
+            ssl_send_all(ssl, header.c_str(), header.size());
 
             vector<char> buf(size);
             in.read(buf.data(), size);
-            send_all(client, buf.data(), buf.size());
+            ssl_send_all(ssl, buf.data(), buf.size());
 
             cout << "[server " << port << "] served file '" << fname
                  << "' (" << size << " bytes)" << endl;
@@ -332,13 +412,15 @@ int main(int argc, char* argv[]) {
             lock_guard<mutex> lock(fs_mutex);
             for (auto& entry : fs::directory_iterator(file_storage)) {
                 string name = entry.path().filename().string() + "\n";
-                send_all(client, name.c_str(), name.size());
+                ssl_send_all(ssl, name.c_str(), name.size());
             }
             string end = "END\n";
-            send_all(client, end.c_str(), end.size());
+            ssl_send_all(ssl, end.c_str(), end.size());
         }
 
-        close(client);
+        SSL_shutdown(ssl);
+        SSL_free(ssl);
+        close(client_fd);
     };
 
     while (true) {

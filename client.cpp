@@ -11,27 +11,41 @@
 #include <openssl/sha.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+
 using namespace std;
 namespace fs = std::filesystem;
 
 static string auth_token;
+static SSL_CTX* ssl_ctx = nullptr;
 
-static bool send_all(int sock, const void* buf, size_t size) {
+struct TLSConn {
+    int fd = -1;
+    SSL* ssl = nullptr;
+
+    void close_conn() {
+        if (ssl) { SSL_shutdown(ssl); SSL_free(ssl); ssl = nullptr; }
+        if (fd >= 0) { close(fd); fd = -1; }
+    }
+};
+
+static bool ssl_send_all(SSL* ssl, const void* buf, size_t size) {
     size_t sent = 0;
     const char* p = (const char*)buf;
     while (sent < size) {
-        ssize_t s = send(sock, p + sent, size - sent, 0);
+        int s = SSL_write(ssl, p + sent, size - sent);
         if (s <= 0) return false;
         sent += s;
     }
     return true;
 }
 
-static bool recv_all(int sock, void* buf, size_t size) {
+static bool ssl_recv_all(SSL* ssl, void* buf, size_t size) {
     size_t got = 0;
     char* p = (char*)buf;
     while (got < size) {
-        ssize_t r = recv(sock, p + got, size - got, 0);
+        int r = SSL_read(ssl, p + got, size - got);
         if (r <= 0) return false;
         got += r;
     }
@@ -133,12 +147,13 @@ static vector<uint8_t> aes_decrypt(const vector<uint8_t>& cipher,
     return out;
 }
 
-static int connect_to(const string& addr) {
+static TLSConn tls_connect(const string& addr) {
+    TLSConn conn;
     auto p = addr.find(':');
     string host = addr.substr(0, p);
     int port = stoi(addr.substr(p + 1));
 
-    int s = socket(AF_INET, SOCK_STREAM, 0);
+    conn.fd = socket(AF_INET, SOCK_STREAM, 0);
     sockaddr_in a{};
     a.sin_family = AF_INET;
     a.sin_port = htons(port);
@@ -147,36 +162,48 @@ static int connect_to(const string& addr) {
     struct timeval tv;
     tv.tv_sec = 2;
     tv.tv_usec = 0;
-    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(conn.fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    setsockopt(conn.fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
-    if (connect(s, (sockaddr*)&a, sizeof(a)) < 0) {
-        close(s);
-        return -1;
+    if (connect(conn.fd, (sockaddr*)&a, sizeof(a)) < 0) {
+        close(conn.fd);
+        conn.fd = -1;
+        return conn;
     }
-    return s;
+
+    conn.ssl = SSL_new(ssl_ctx);
+    SSL_set_fd(conn.ssl, conn.fd);
+    if (SSL_connect(conn.ssl) <= 0) {
+        SSL_free(conn.ssl);
+        close(conn.fd);
+        conn.fd = -1;
+        conn.ssl = nullptr;
+        return conn;
+    }
+
+    return conn;
 }
 
 static bool ping_server(const string& addr) {
-    int s = connect_to(addr);
-    if (s < 0) return false;
+    TLSConn c = tls_connect(addr);
+    if (!c.ssl) return false;
 
     string req = "PING\n";
-    send_all(s, req.c_str(), req.size());
+    ssl_send_all(c.ssl, req.c_str(), req.size());
 
     string line;
     char ch;
-    while (recv(s, &ch, 1, 0) == 1 && ch != '\n')
+    while (SSL_read(c.ssl, &ch, 1) == 1 && ch != '\n')
         line.push_back(ch);
 
-    close(s);
+    c.close_conn();
     return line == "PONG";
 }
 
-static bool send_auth(int sock) {
+static bool send_auth(SSL* ssl) {
     if (auth_token.empty()) return true;
     string auth = "AUTH " + auth_token + "\n";
-    return send_all(sock, auth.c_str(), auth.size());
+    return ssl_send_all(ssl, auth.c_str(), auth.size());
 }
 
 static bool upload_direct(const string& addr, const string& filename,
@@ -187,21 +214,21 @@ static bool upload_direct(const string& addr, const string& filename,
     vector<uint8_t> iv;
     auto cipher = aes_encrypt(data, session_key, iv);
 
-    int s = connect_to(addr);
-    if (s < 0) return false;
-    if (!send_auth(s)) { close(s); return false; }
+    TLSConn c = tls_connect(addr);
+    if (!c.ssl) return false;
+    if (!send_auth(c.ssl)) { c.close_conn(); return false; }
 
     string header = "UPLOAD " + filename + " " + to_string(cipher.size()) +
                     " " + bytes_to_hex(session_key) + " " + bytes_to_hex(iv) + "\n";
-    if (!send_all(s, header.c_str(), header.size())) { close(s); return false; }
-    if (!send_all(s, cipher.data(), cipher.size())) { close(s); return false; }
+    if (!ssl_send_all(c.ssl, header.c_str(), header.size())) { c.close_conn(); return false; }
+    if (!ssl_send_all(c.ssl, cipher.data(), cipher.size())) { c.close_conn(); return false; }
 
     string line;
     char ch;
-    while (recv(s, &ch, 1, 0) == 1 && ch != '\n')
+    while (SSL_read(c.ssl, &ch, 1) == 1 && ch != '\n')
         line.push_back(ch);
 
-    close(s);
+    c.close_conn();
     if (line == "AUTH_FAILED") {
         cout << "Authentication failed. Check your token.\n";
         return false;
@@ -211,54 +238,54 @@ static bool upload_direct(const string& addr, const string& filename,
 
 static bool put_chunk(const string& addr, const string& id,
                       const vector<uint8_t>& data) {
-    int s = connect_to(addr);
-    if (s < 0) return false;
-    if (!send_auth(s)) { close(s); return false; }
+    TLSConn c = tls_connect(addr);
+    if (!c.ssl) return false;
+    if (!send_auth(c.ssl)) { c.close_conn(); return false; }
 
     string header = "PUT " + id + " " + to_string(data.size()) + "\n";
-    if (!send_all(s, header.c_str(), header.size())) { close(s); return false; }
-    if (!send_all(s, data.data(), data.size())) { close(s); return false; }
-    close(s);
+    if (!ssl_send_all(c.ssl, header.c_str(), header.size())) { c.close_conn(); return false; }
+    if (!ssl_send_all(c.ssl, data.data(), data.size())) { c.close_conn(); return false; }
+    c.close_conn();
     return true;
 }
 
 static bool fetch_chunk(const string& addr, const string& id,
                         vector<uint8_t>& out) {
-    int s = connect_to(addr);
-    if (s < 0) return false;
-    if (!send_auth(s)) { close(s); return false; }
+    TLSConn c = tls_connect(addr);
+    if (!c.ssl) return false;
+    if (!send_auth(c.ssl)) { c.close_conn(); return false; }
 
     string req = "FETCH " + id + "\n";
-    send_all(s, req.c_str(), req.size());
+    ssl_send_all(c.ssl, req.c_str(), req.size());
 
     string line;
     char ch;
-    while (recv(s, &ch, 1, 0) == 1 && ch != '\n')
+    while (SSL_read(c.ssl, &ch, 1) == 1 && ch != '\n')
         line.push_back(ch);
 
-    if (line.empty()) { close(s); return false; }
+    if (line.empty()) { c.close_conn(); return false; }
     size_t size = stoul(line);
 
     out.resize(size);
-    if (!recv_all(s, out.data(), size)) { close(s); return false; }
-    close(s);
+    if (!ssl_recv_all(c.ssl, out.data(), size)) { c.close_conn(); return false; }
+    c.close_conn();
     return true;
 }
 
 static bool delete_chunk(const string& addr, const string& id) {
-    int s = connect_to(addr);
-    if (s < 0) return false;
-    if (!send_auth(s)) { close(s); return false; }
+    TLSConn c = tls_connect(addr);
+    if (!c.ssl) return false;
+    if (!send_auth(c.ssl)) { c.close_conn(); return false; }
 
     string req = "DELETE " + id + "\n";
-    send_all(s, req.c_str(), req.size());
+    ssl_send_all(c.ssl, req.c_str(), req.size());
 
     string line;
     char ch;
-    while (recv(s, &ch, 1, 0) == 1 && ch != '\n')
+    while (SSL_read(c.ssl, &ch, 1) == 1 && ch != '\n')
         line.push_back(ch);
 
-    close(s);
+    c.close_conn();
     return line == "OK";
 }
 
@@ -421,27 +448,27 @@ static vector<uint8_t> recover_from_peers(const string& meta_path,
 }
 
 static void do_list(const string& server) {
-    int s = connect_to(server);
-    if (s < 0) {
+    TLSConn c = tls_connect(server);
+    if (!c.ssl) {
         cout << "Cannot connect to server\n";
         return;
     }
-    if (!send_auth(s)) { close(s); return; }
+    if (!send_auth(c.ssl)) { c.close_conn(); return; }
 
     string req = "LIST\n";
-    send_all(s, req.c_str(), req.size());
+    ssl_send_all(c.ssl, req.c_str(), req.size());
 
     cout << "Files on server:\n";
     string line;
     while (true) {
         line.clear();
         char ch;
-        while (recv(s, &ch, 1, 0) == 1 && ch != '\n')
+        while (SSL_read(c.ssl, &ch, 1) == 1 && ch != '\n')
             line.push_back(ch);
         if (line == "END" || line.empty()) break;
         cout << "  " << line << "\n";
     }
-    close(s);
+    c.close_conn();
 }
 
 int main(int argc, char* argv[]) {
@@ -454,6 +481,11 @@ int main(int argc, char* argv[]) {
         cout << "  ./client --token <token> list <server>\n";
         return 1;
     }
+
+    // Initialize TLS
+    ssl_ctx = SSL_CTX_new(TLS_client_method());
+    // Accept self-signed certificates (personal cloud)
+    SSL_CTX_set_verify(ssl_ctx, SSL_VERIFY_NONE, nullptr);
 
     // Parse --token flag
     int arg_offset = 1;
@@ -530,35 +562,35 @@ int main(int argc, char* argv[]) {
         if (ping_server(server)) {
             cout << "Downloading from server...\n";
 
-            int s = connect_to(server);
-            if (s < 0) {
+            TLSConn c = tls_connect(server);
+            if (!c.ssl) {
                 cout << "Connection failed\n";
                 return 1;
             }
-            if (!send_auth(s)) { close(s); return 1; }
+            if (!send_auth(c.ssl)) { c.close_conn(); return 1; }
 
             string req = "FETCH_FILE " + basename + "\n";
-            send_all(s, req.c_str(), req.size());
+            ssl_send_all(c.ssl, req.c_str(), req.size());
 
             string line;
             char ch;
-            while (recv(s, &ch, 1, 0) == 1 && ch != '\n')
+            while (SSL_read(c.ssl, &ch, 1) == 1 && ch != '\n')
                 line.push_back(ch);
 
             if (line.empty()) {
                 cout << "File not found on server\n";
-                close(s);
+                c.close_conn();
                 return 1;
             }
 
             size_t size = stoul(line);
             vector<uint8_t> filedata(size);
-            if (!recv_all(s, filedata.data(), size)) {
+            if (!ssl_recv_all(c.ssl, filedata.data(), size)) {
                 cout << "Download failed\n";
-                close(s);
+                c.close_conn();
                 return 1;
             }
-            close(s);
+            c.close_conn();
 
             ofstream out(file, ios::binary);
             out.write((char*)filedata.data(), filedata.size());
@@ -686,5 +718,6 @@ int main(int argc, char* argv[]) {
         do_list(argv[arg_offset + 1]);
     }
 
+    SSL_CTX_free(ssl_ctx);
     return 0;
 }
