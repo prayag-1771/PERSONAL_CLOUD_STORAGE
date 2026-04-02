@@ -41,6 +41,15 @@ static string load_or_create_token(const fs::path& token_path) {
 
 static string server_token;
 
+static bool is_safe_name(const string& name) {
+    if (name.empty()) return false;
+    if (name == "." || name == "..") return false;
+    if (name.find('/') != string::npos) return false;
+    if (name.find('\\') != string::npos) return false;
+    if (name.find('\0') != string::npos) return false;
+    return true;
+}
+
 static bool recv_all(int sock, void* buf, size_t size) {
     size_t got = 0;
     char* p = static_cast<char*>(buf);
@@ -192,7 +201,7 @@ int main(int argc, char* argv[]) {
             stringstream ss(line);
             ss >> cmd >> filename >> cipher_size >> key_hex >> iv_hex;
 
-            if (filename.empty() || cipher_size == 0) {
+            if (filename.empty() || cipher_size == 0 || !is_safe_name(filename)) {
                 close(client);
                 continue;
             }
@@ -225,7 +234,7 @@ int main(int argc, char* argv[]) {
             stringstream ss(line);
             ss >> cmd >> chunk_id >> size;
 
-            if (chunk_id.empty() || size == 0) {
+            if (chunk_id.empty() || size == 0 || !is_safe_name(chunk_id)) {
                 close(client);
                 continue;
             }
@@ -246,6 +255,7 @@ int main(int argc, char* argv[]) {
 
         else if (line.rfind("FETCH ", 0) == 0) {
             string chunk_id = line.substr(6);
+            if (!is_safe_name(chunk_id)) { close(client); continue; }
             fs::path file = chunk_storage / chunk_id;
 
             if (!fs::exists(file)) {
@@ -268,6 +278,7 @@ int main(int argc, char* argv[]) {
 
         else if (line.rfind("DELETE ", 0) == 0) {
             string chunk_id = line.substr(7);
+            if (!is_safe_name(chunk_id)) { close(client); continue; }
             fs::path file = chunk_storage / chunk_id;
 
             if (fs::exists(file)) {
@@ -281,6 +292,7 @@ int main(int argc, char* argv[]) {
 
         else if (line.rfind("FETCH_FILE ", 0) == 0) {
             string fname = line.substr(11);
+            if (!is_safe_name(fname)) { close(client); continue; }
             fs::path file = file_storage / fname;
 
             if (!fs::exists(file)) {
