@@ -102,10 +102,18 @@ static vector<uint8_t> gf_scale(const vector<uint8_t>& buf, uint8_t coeff) {
     return r;
 }
 
-static vector<uint8_t> derive_key(const string& pass) {
+static vector<uint8_t> derive_key(const string& pass, const vector<uint8_t>& salt) {
     vector<uint8_t> key(32);
-    SHA256((const uint8_t*)pass.data(), pass.size(), key.data());
+    PKCS5_PBKDF2_HMAC(pass.data(), pass.size(),
+                       salt.data(), salt.size(),
+                       100000, EVP_sha256(), 32, key.data());
     return key;
+}
+
+static vector<uint8_t> generate_salt() {
+    vector<uint8_t> salt(16);
+    RAND_bytes(salt.data(), 16);
+    return salt;
 }
 
 static vector<uint8_t> aes_encrypt(const vector<uint8_t>& plain,
@@ -313,7 +321,8 @@ static void do_erasure_upload(const string& file, const string& server_addr,
         return;
     }
 
-    auto key = derive_key(pass);
+    auto salt = generate_salt();
+    auto key = derive_key(pass, salt);
 
     in.seekg(0, ios::end);
     size_t orig_size = in.tellg();
@@ -349,6 +358,8 @@ static void do_erasure_upload(const string& file, const string& server_addr,
     meta << cipher.size() << "\n";
     meta << iv.size() << "\n";
     meta.write((char*)iv.data(), iv.size());
+    meta << "\n" << salt.size() << "\n";
+    meta.write((char*)salt.data(), salt.size());
     meta << "\n2 2\n";
 
     bool ok = true;
@@ -378,7 +389,7 @@ static vector<uint8_t> recover_from_peers(const string& meta_path,
     ifstream meta(meta_path, ios::binary);
     if (!meta) return {};
 
-    size_t cipher_size, iv_len;
+    size_t cipher_size, iv_len, salt_len;
     int k, m;
 
     getline(meta, server_addr);
@@ -391,6 +402,13 @@ static vector<uint8_t> recover_from_peers(const string& meta_path,
     meta.read((char*)iv.data(), iv_len);
     meta.get();
 
+    meta >> salt_len;
+    meta.get();
+
+    vector<uint8_t> salt(salt_len);
+    meta.read((char*)salt.data(), salt_len);
+    meta.get();
+
     meta >> k >> m;
 
     map<int, pair<string,string>> entries;
@@ -399,7 +417,7 @@ static vector<uint8_t> recover_from_peers(const string& meta_path,
     while (meta >> idx >> id >> addr)
         entries[idx] = {id, addr};
 
-    auto key = derive_key(pass);
+    auto key = derive_key(pass, salt);
 
     vector<uint8_t> d0, d1, p0, p1;
     for (auto& [i, e] : entries) {
