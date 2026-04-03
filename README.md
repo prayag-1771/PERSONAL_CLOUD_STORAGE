@@ -167,3 +167,6 @@ g++ -std=c++17 -o client client.cpp -lssl -lcrypto
 - Autosync detects server but requires manual `sync` for passphrase entry
 - Self-signed TLS cert (not CA-signed — fine for personal/LAN use)
 - No web UI or mobile client yet
+
+
+Limitations -
