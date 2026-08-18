@@ -9,6 +9,8 @@
 #include "pcs/digest.hpp"
 #include "pcs/hex.hpp"
 
+using namespace std;
+
 namespace fs = std::filesystem;
 
 namespace pcs {
@@ -17,12 +19,12 @@ namespace {
 // Fixed header: magic[4] version[1] iterations[4] salt[16] block[4] plain[8].
 constexpr size_t kHeaderLen = 4 + 1 + 4 + config::kSaltLen + 4 + 8;
 
-void put_u32(std::vector<uint8_t>& out, uint32_t value) {
+void put_u32(vector<uint8_t>& out, uint32_t value) {
     for (int i = 0; i < 4; i++)
         out.push_back(static_cast<uint8_t>((value >> (8 * i)) & 0xFF));
 }
 
-void put_u64(std::vector<uint8_t>& out, uint64_t value) {
+void put_u64(vector<uint8_t>& out, uint64_t value) {
     for (int i = 0; i < 8; i++)
         out.push_back(static_cast<uint8_t>((value >> (8 * i)) & 0xFF));
 }
@@ -39,8 +41,8 @@ uint64_t get_u64(const uint8_t* p) {
     return v;
 }
 
-std::vector<uint8_t> build_header(const StreamHeader& h) {
-    std::vector<uint8_t> out;
+vector<uint8_t> build_header(const StreamHeader& h) {
+    vector<uint8_t> out;
     out.reserve(kHeaderLen);
     out.insert(out.end(), config::kStreamMagic, config::kStreamMagic + 4);
     out.push_back(config::kStreamVersion);
@@ -51,13 +53,13 @@ std::vector<uint8_t> build_header(const StreamHeader& h) {
     return out;
 }
 
-bool parse_header(const std::vector<uint8_t>& raw, StreamHeader& out,
-                  std::string& error) {
+bool parse_header(const vector<uint8_t>& raw, StreamHeader& out,
+                  string& error) {
     if (raw.size() != kHeaderLen) {
         error = "truncated stream header";
         return false;
     }
-    if (std::memcmp(raw.data(), config::kStreamMagic, 4) != 0) {
+    if (memcmp(raw.data(), config::kStreamMagic, 4) != 0) {
         error = "not a PCS stream (bad magic)";
         return false;
     }
@@ -84,9 +86,9 @@ bool parse_header(const std::vector<uint8_t>& raw, StreamHeader& out,
 
 // Each block is authenticated against the whole header plus its own index, so
 // blocks cannot be reordered, duplicated or dropped without detection.
-std::vector<uint8_t> block_aad(const std::vector<uint8_t>& header,
+vector<uint8_t> block_aad(const vector<uint8_t>& header,
                                uint64_t index) {
-    std::vector<uint8_t> aad = header;
+    vector<uint8_t> aad = header;
     put_u64(aad, index);
     return aad;
 }
@@ -99,9 +101,9 @@ uint64_t block_count(uint64_t plain_size, uint32_t block_size) {
 }  // namespace
 
 bool seal_file(const fs::path& plain_path, const fs::path& stream_path,
-               const std::string& passphrase, std::string* dedup_tag,
-               const ProgressFn& progress, std::string& error) {
-    std::error_code ec;
+               const string& passphrase, string* dedup_tag,
+               const ProgressFn& progress, string& error) {
+    error_code ec;
     if (!fs::exists(plain_path, ec) || !fs::is_regular_file(plain_path, ec)) {
         error = "not a readable file: " + plain_path.string();
         return false;
@@ -113,7 +115,7 @@ bool seal_file(const fs::path& plain_path, const fs::path& stream_path,
         return false;
     }
 
-    std::ifstream in(plain_path, std::ios::binary);
+    ifstream in(plain_path, ios::binary);
     if (!in) {
         error = "cannot open " + plain_path.string();
         return false;
@@ -129,7 +131,7 @@ bool seal_file(const fs::path& plain_path, const fs::path& stream_path,
         return false;
     }
 
-    const std::vector<uint8_t> key =
+    const vector<uint8_t> key =
         derive_key(passphrase, header.salt, config::kContentKeyLabel,
                    header.iterations);
     if (key.size() != config::kKeyLen) {
@@ -137,27 +139,27 @@ bool seal_file(const fs::path& plain_path, const fs::path& stream_path,
         return false;
     }
 
-    std::ofstream out(stream_path, std::ios::binary | std::ios::trunc);
+    ofstream out(stream_path, ios::binary | ios::trunc);
     if (!out) {
         error = "cannot write " + stream_path.string();
         return false;
     }
 
-    const std::vector<uint8_t> raw_header = build_header(header);
+    const vector<uint8_t> raw_header = build_header(header);
     out.write(reinterpret_cast<const char*>(raw_header.data()),
-              static_cast<std::streamsize>(raw_header.size()));
+              static_cast<streamsize>(raw_header.size()));
 
     HmacSha256 tagger(derive_dedup_key(passphrase));
 
-    std::vector<uint8_t> block(header.block_size);
+    vector<uint8_t> block(header.block_size);
     uint64_t done = 0;
     uint64_t index = 0;
 
     while (done < plain_size) {
         const uint64_t want =
-            std::min<uint64_t>(header.block_size, plain_size - done);
+            min<uint64_t>(header.block_size, plain_size - done);
         in.read(reinterpret_cast<char*>(block.data()),
-                static_cast<std::streamsize>(want));
+                static_cast<streamsize>(want));
         if (static_cast<uint64_t>(in.gcount()) != want) {
             error = "short read (did the file change while it was sealed?)";
             return false;
@@ -165,24 +167,24 @@ bool seal_file(const fs::path& plain_path, const fs::path& stream_path,
 
         tagger.update(block.data(), static_cast<size_t>(want));
 
-        const std::vector<uint8_t> iv = random_bytes(config::kIvLen);
-        std::vector<uint8_t> cipher, tag;
+        const vector<uint8_t> iv = random_bytes(config::kIvLen);
+        vector<uint8_t> cipher, tag;
         if (!aes_gcm_seal(key, iv, block_aad(raw_header, index), block.data(),
                           static_cast<size_t>(want), cipher, tag)) {
             error = "encryption failed";
             return false;
         }
 
-        std::vector<uint8_t> length_le;
+        vector<uint8_t> length_le;
         put_u32(length_le, static_cast<uint32_t>(cipher.size()));
 
         out.write(reinterpret_cast<const char*>(iv.data()),
-                  static_cast<std::streamsize>(iv.size()));
+                  static_cast<streamsize>(iv.size()));
         out.write(reinterpret_cast<const char*>(length_le.data()), 4);
         out.write(reinterpret_cast<const char*>(cipher.data()),
-                  static_cast<std::streamsize>(cipher.size()));
+                  static_cast<streamsize>(cipher.size()));
         out.write(reinterpret_cast<const char*>(tag.data()),
-                  static_cast<std::streamsize>(tag.size()));
+                  static_cast<streamsize>(tag.size()));
         if (!out) {
             error = "write failed (disk full?)";
             return false;
@@ -205,17 +207,17 @@ bool seal_file(const fs::path& plain_path, const fs::path& stream_path,
 }
 
 bool open_file(const fs::path& stream_path, const fs::path& plain_path,
-               const std::string& passphrase, const ProgressFn& progress,
-               std::string& error) {
-    std::ifstream in(stream_path, std::ios::binary);
+               const string& passphrase, const ProgressFn& progress,
+               string& error) {
+    ifstream in(stream_path, ios::binary);
     if (!in) {
         error = "cannot open " + stream_path.string();
         return false;
     }
 
-    std::vector<uint8_t> raw_header(kHeaderLen);
+    vector<uint8_t> raw_header(kHeaderLen);
     in.read(reinterpret_cast<char*>(raw_header.data()),
-            static_cast<std::streamsize>(kHeaderLen));
+            static_cast<streamsize>(kHeaderLen));
     if (static_cast<size_t>(in.gcount()) != kHeaderLen) {
         error = "stream is too short to contain a header";
         return false;
@@ -224,7 +226,7 @@ bool open_file(const fs::path& stream_path, const fs::path& plain_path,
     StreamHeader header;
     if (!parse_header(raw_header, header, error)) return false;
 
-    const std::vector<uint8_t> key =
+    const vector<uint8_t> key =
         derive_key(passphrase, header.salt, config::kContentKeyLabel,
                    header.iterations);
     if (key.size() != config::kKeyLen) {
@@ -232,7 +234,7 @@ bool open_file(const fs::path& stream_path, const fs::path& plain_path,
         return false;
     }
 
-    std::ofstream out(plain_path, std::ios::binary | std::ios::trunc);
+    ofstream out(plain_path, ios::binary | ios::trunc);
     if (!out) {
         error = "cannot write " + plain_path.string();
         return false;
@@ -243,11 +245,11 @@ bool open_file(const fs::path& stream_path, const fs::path& plain_path,
     bool ok = true;
 
     for (uint64_t index = 0; index < blocks && ok; index++) {
-        std::vector<uint8_t> iv(config::kIvLen);
+        vector<uint8_t> iv(config::kIvLen);
         uint8_t length_le[4];
 
         in.read(reinterpret_cast<char*>(iv.data()),
-                static_cast<std::streamsize>(iv.size()));
+                static_cast<streamsize>(iv.size()));
         in.read(reinterpret_cast<char*>(length_le), 4);
         if (!in) {
             error = "stream ends in the middle of a block";
@@ -262,19 +264,19 @@ bool open_file(const fs::path& stream_path, const fs::path& plain_path,
             break;
         }
 
-        std::vector<uint8_t> cipher(cipher_len);
-        std::vector<uint8_t> tag(config::kTagLen);
+        vector<uint8_t> cipher(cipher_len);
+        vector<uint8_t> tag(config::kTagLen);
         in.read(reinterpret_cast<char*>(cipher.data()),
-                static_cast<std::streamsize>(cipher_len));
+                static_cast<streamsize>(cipher_len));
         in.read(reinterpret_cast<char*>(tag.data()),
-                static_cast<std::streamsize>(tag.size()));
+                static_cast<streamsize>(tag.size()));
         if (!in) {
             error = "stream ends in the middle of a block";
             ok = false;
             break;
         }
 
-        std::vector<uint8_t> plain;
+        vector<uint8_t> plain;
         if (!aes_gcm_open(key, iv, block_aad(raw_header, index), cipher.data(),
                           cipher.size(), tag, plain)) {
             error = "authentication failed (wrong passphrase or altered data)";
@@ -283,7 +285,7 @@ bool open_file(const fs::path& stream_path, const fs::path& plain_path,
         }
 
         out.write(reinterpret_cast<const char*>(plain.data()),
-                  static_cast<std::streamsize>(plain.size()));
+                  static_cast<streamsize>(plain.size()));
         if (!out) {
             error = "write failed (disk full?)";
             ok = false;
@@ -303,7 +305,7 @@ bool open_file(const fs::path& stream_path, const fs::path& plain_path,
     if (!ok) {
         // Never leave a half-decrypted file behind to be mistaken for a good
         // one.
-        std::error_code ignored;
+        error_code ignored;
         fs::remove(plain_path, ignored);
         return false;
     }
@@ -311,15 +313,15 @@ bool open_file(const fs::path& stream_path, const fs::path& plain_path,
 }
 
 bool read_header(const fs::path& stream_path, StreamHeader& out,
-                 std::string& error) {
-    std::ifstream in(stream_path, std::ios::binary);
+                 string& error) {
+    ifstream in(stream_path, ios::binary);
     if (!in) {
         error = "cannot open " + stream_path.string();
         return false;
     }
-    std::vector<uint8_t> raw(kHeaderLen);
+    vector<uint8_t> raw(kHeaderLen);
     in.read(reinterpret_cast<char*>(raw.data()),
-            static_cast<std::streamsize>(kHeaderLen));
+            static_cast<streamsize>(kHeaderLen));
     if (static_cast<size_t>(in.gcount()) != kHeaderLen) {
         error = "stream is too short to contain a header";
         return false;
@@ -327,16 +329,16 @@ bool read_header(const fs::path& stream_path, StreamHeader& out,
     return parse_header(raw, out, error);
 }
 
-std::string dedup_tag_for_file(const fs::path& plain_path,
-                               const std::string& passphrase) {
-    std::ifstream in(plain_path, std::ios::binary);
+string dedup_tag_for_file(const fs::path& plain_path,
+                               const string& passphrase) {
+    ifstream in(plain_path, ios::binary);
     if (!in) return {};
 
     HmacSha256 tagger(derive_dedup_key(passphrase));
-    std::vector<char> buf(config::kIoBufferSize);
+    vector<char> buf(config::kIoBufferSize);
     while (in) {
-        in.read(buf.data(), static_cast<std::streamsize>(buf.size()));
-        std::streamsize got = in.gcount();
+        in.read(buf.data(), static_cast<streamsize>(buf.size()));
+        streamsize got = in.gcount();
         if (got > 0) tagger.update(buf.data(), static_cast<size_t>(got));
     }
     return to_hex(tagger.finish());

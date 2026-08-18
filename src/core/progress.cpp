@@ -4,10 +4,12 @@
 #include <iostream>
 #include <utility>
 
+using namespace std;
+
 namespace pcs {
 
-ProgressBar::ProgressBar(std::string label, bool enabled)
-    : label_(std::move(label)), enabled_(enabled) {}
+ProgressBar::ProgressBar(string label, bool enabled)
+    : label_(move(label)), enabled_(enabled) {}
 
 void ProgressBar::update(uint64_t done, uint64_t total) {
     if (!enabled_ || done_printed_) return;
@@ -25,10 +27,10 @@ void ProgressBar::update(uint64_t done, uint64_t total) {
     const int width = 30;
     int filled = width * percent / 100;
 
-    std::cout << "\r  " << label_ << " [";
-    for (int i = 0; i < width; i++) std::cout << (i < filled ? '#' : '.');
-    std::cout << "] " << percent << "%  " << human_size(done) << " / "
-              << human_size(total) << "   " << std::flush;
+    cout << "\r  " << label_ << " [";
+    for (int i = 0; i < width; i++) cout << (i < filled ? '#' : '.');
+    cout << "] " << percent << "%  " << human_size(done) << " / "
+              << human_size(total) << "   " << flush;
 
     if (total > 0 && done >= total) finish();
 }
@@ -36,10 +38,10 @@ void ProgressBar::update(uint64_t done, uint64_t total) {
 void ProgressBar::finish() {
     if (!enabled_ || done_printed_) return;
     done_printed_ = true;
-    std::cout << std::endl;
+    cout << endl;
 }
 
-std::string human_size(uint64_t bytes) {
+string human_size(uint64_t bytes) {
     const char* units[] = {"B", "KB", "MB", "GB", "TB"};
     double value = static_cast<double>(bytes);
     int unit = 0;
@@ -50,11 +52,11 @@ std::string human_size(uint64_t bytes) {
 
     char buf[64];
     if (unit == 0)
-        std::snprintf(buf, sizeof(buf), "%llu B",
+        snprintf(buf, sizeof(buf), "%llu B",
                       static_cast<unsigned long long>(bytes));
     else
-        std::snprintf(buf, sizeof(buf), "%.1f %s", value, units[unit]);
-    return std::string(buf);
+        snprintf(buf, sizeof(buf), "%.1f %s", value, units[unit]);
+    return string(buf);
 }
 
 }  // namespace pcs

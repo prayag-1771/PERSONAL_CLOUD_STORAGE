@@ -1,5 +1,7 @@
 #include "pcs/hex.hpp"
 
+using namespace std;
+
 namespace pcs {
 namespace {
 
@@ -14,8 +16,8 @@ int hex_value(char c) {
 
 }  // namespace
 
-std::string to_hex(const uint8_t* data, size_t len) {
-    std::string out;
+string to_hex(const uint8_t* data, size_t len) {
+    string out;
     out.resize(len * 2);
     for (size_t i = 0; i < len; i++) {
         out[2 * i]     = kDigits[data[i] >> 4];
@@ -24,14 +26,14 @@ std::string to_hex(const uint8_t* data, size_t len) {
     return out;
 }
 
-std::string to_hex(const std::vector<uint8_t>& data) {
+string to_hex(const vector<uint8_t>& data) {
     return to_hex(data.data(), data.size());
 }
 
-bool from_hex(const std::string& hex, std::vector<uint8_t>& out) {
+bool from_hex(const string& hex, vector<uint8_t>& out) {
     if (hex.size() % 2 != 0) return false;
 
-    std::vector<uint8_t> parsed(hex.size() / 2);
+    vector<uint8_t> parsed(hex.size() / 2);
     for (size_t i = 0; i < parsed.size(); i++) {
         int hi = hex_value(hex[2 * i]);
         int lo = hex_value(hex[2 * i + 1]);

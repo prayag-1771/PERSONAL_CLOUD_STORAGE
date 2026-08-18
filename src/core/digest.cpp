@@ -14,6 +14,8 @@
 #include "pcs/config.hpp"
 #include "pcs/hex.hpp"
 
+using namespace std;
+
 namespace pcs {
 
 // --- SHA-256 ---------------------------------------------------------------
@@ -35,8 +37,8 @@ void Sha256::update(const void* data, size_t len) {
     if (impl_->ctx && len > 0) EVP_DigestUpdate(impl_->ctx, data, len);
 }
 
-std::vector<uint8_t> Sha256::finish() {
-    std::vector<uint8_t> out(32);
+vector<uint8_t> Sha256::finish() {
+    vector<uint8_t> out(32);
     if (!impl_->ctx) return out;
     unsigned int len = 0;
     EVP_DigestFinal_ex(impl_->ctx, out.data(), &len);
@@ -55,7 +57,7 @@ struct HmacSha256::Impl {
 #endif
 };
 
-HmacSha256::HmacSha256(const std::vector<uint8_t>& key) : impl_(new Impl) {
+HmacSha256::HmacSha256(const vector<uint8_t>& key) : impl_(new Impl) {
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L
     impl_->mac = EVP_MAC_fetch(nullptr, "HMAC", nullptr);
     if (!impl_->mac) return;
@@ -93,8 +95,8 @@ void HmacSha256::update(const void* data, size_t len) {
 #endif
 }
 
-std::vector<uint8_t> HmacSha256::finish() {
-    std::vector<uint8_t> out(32);
+vector<uint8_t> HmacSha256::finish() {
+    vector<uint8_t> out(32);
     if (!impl_->ctx) return out;
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L
     size_t len = 0;
@@ -110,35 +112,35 @@ std::vector<uint8_t> HmacSha256::finish() {
 
 // --- convenience -----------------------------------------------------------
 
-std::vector<uint8_t> sha256(const void* data, size_t len) {
+vector<uint8_t> sha256(const void* data, size_t len) {
     Sha256 h;
     h.update(data, len);
     return h.finish();
 }
 
-std::vector<uint8_t> sha256(const std::vector<uint8_t>& data) {
+vector<uint8_t> sha256(const vector<uint8_t>& data) {
     return sha256(data.data(), data.size());
 }
 
-std::string sha256_hex(const std::vector<uint8_t>& data) {
+string sha256_hex(const vector<uint8_t>& data) {
     return to_hex(sha256(data));
 }
 
-std::string sha256_file_hex(const std::filesystem::path& path) {
-    std::ifstream in(path, std::ios::binary);
+string sha256_file_hex(const filesystem::path& path) {
+    ifstream in(path, ios::binary);
     if (!in) return {};
 
     Sha256 h;
-    std::vector<char> buf(config::kIoBufferSize);
+    vector<char> buf(config::kIoBufferSize);
     while (in) {
-        in.read(buf.data(), static_cast<std::streamsize>(buf.size()));
-        std::streamsize got = in.gcount();
+        in.read(buf.data(), static_cast<streamsize>(buf.size()));
+        streamsize got = in.gcount();
         if (got > 0) h.update(buf.data(), static_cast<size_t>(got));
     }
     return to_hex(h.finish());
 }
 
-bool secure_equal(const std::string& a, const std::string& b) {
+bool secure_equal(const string& a, const string& b) {
     if (a.size() != b.size()) return false;
     if (a.empty()) return true;
     return CRYPTO_memcmp(a.data(), b.data(), a.size()) == 0;

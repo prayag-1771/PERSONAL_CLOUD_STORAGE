@@ -1,5 +1,7 @@
 #include "pcs/gf256.hpp"
 
+using namespace std;
+
 namespace pcs {
 
 uint8_t gf_mul(uint8_t a, uint8_t b) {
@@ -33,16 +35,16 @@ void xor_into(const uint8_t* a, const uint8_t* b, size_t n, uint8_t* dst) {
     for (size_t i = 0; i < n; i++) dst[i] = static_cast<uint8_t>(a[i] ^ b[i]);
 }
 
-std::vector<uint8_t> gf_scale(const std::vector<uint8_t>& buf, uint8_t coeff) {
-    std::vector<uint8_t> out(buf.size());
+vector<uint8_t> gf_scale(const vector<uint8_t>& buf, uint8_t coeff) {
+    vector<uint8_t> out(buf.size());
     gf_scale_into(buf.data(), buf.size(), coeff, out.data());
     return out;
 }
 
-std::vector<uint8_t> xor_buf(const std::vector<uint8_t>& a,
-                             const std::vector<uint8_t>& b) {
+vector<uint8_t> xor_buf(const vector<uint8_t>& a,
+                             const vector<uint8_t>& b) {
     size_t n = a.size() < b.size() ? a.size() : b.size();
-    std::vector<uint8_t> out(n);
+    vector<uint8_t> out(n);
     xor_into(a.data(), b.data(), n, out.data());
     return out;
 }

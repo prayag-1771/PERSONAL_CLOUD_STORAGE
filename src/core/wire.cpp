@@ -9,6 +9,9 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
 using socket_t = SOCKET;
@@ -36,33 +39,35 @@ static constexpr socket_t kBadSocket = -1;
 
 #include "pcs/config.hpp"
 
+using namespace std;
+
 namespace pcs {
 namespace {
 
-std::once_flag g_startup_once;
+once_flag g_startup_once;
 
-std::string ssl_error_text() {
+string ssl_error_text() {
     unsigned long code = ERR_get_error();
     if (code == 0) return "unknown TLS error";
     char buf[256];
     ERR_error_string_n(code, buf, sizeof(buf));
-    return std::string(buf);
+    return string(buf);
 }
 
 // Splits "host:port". IPv6 literals may be bracketed, as in "[::1]:9000".
-bool split_address(const std::string& address, std::string& host,
-                   std::string& port) {
+bool split_address(const string& address, string& host,
+                   string& port) {
     if (address.empty()) return false;
 
     if (address.front() == '[') {
         const size_t close = address.find(']');
-        if (close == std::string::npos || close + 2 > address.size()) return false;
+        if (close == string::npos || close + 2 > address.size()) return false;
         if (address[close + 1] != ':') return false;
         host = address.substr(1, close - 1);
         port = address.substr(close + 2);
     } else {
         const size_t colon = address.rfind(':');
-        if (colon == std::string::npos) return false;
+        if (colon == string::npos) return false;
         host = address.substr(0, colon);
         port = address.substr(colon + 1);
     }
@@ -121,7 +126,7 @@ bool connect_with_timeout(socket_t fd, const sockaddr* addr, socklen_t len,
 }  // namespace
 
 void net_startup() {
-    std::call_once(g_startup_once, [] {
+    call_once(g_startup_once, [] {
 #ifdef _WIN32
         WSADATA data;
         WSAStartup(MAKEWORD(2, 2), &data);
@@ -138,8 +143,8 @@ void net_shutdown() {
 #endif
 }
 
-bool Channel::send_line(const std::string& line) {
-    const std::string framed = line + "\n";
+bool Channel::send_line(const string& line) {
+    const string framed = line + "\n";
     return send(framed.data(), framed.size());
 }
 
@@ -188,7 +193,7 @@ public:
         return true;
     }
 
-    bool read_line(std::string& out) override {
+    bool read_line(string& out) override {
         out.clear();
         char c = 0;
         while (true) {
@@ -244,10 +249,10 @@ private:
 
 }  // namespace
 
-ChannelPtr dial(const std::string& address, std::string& error) {
+ChannelPtr dial(const string& address, string& error) {
     net_startup();
 
-    std::string host, port;
+    string host, port;
     if (!split_address(address, host, port)) {
         error = "malformed address (expected host:port): " + address;
         return nullptr;
@@ -318,8 +323,8 @@ ChannelPtr dial(const std::string& address, std::string& error) {
     return ChannelPtr(new TlsChannel(fd, ssl, ctx));
 }
 
-ListenerPtr listen_tls(int port, const std::string& cert_path,
-                       const std::string& key_path, std::string& error) {
+ListenerPtr listen_tls(int port, const string& cert_path,
+                       const string& key_path, string& error) {
     net_startup();
 
     SSL_CTX* ctx = SSL_CTX_new(TLS_server_method());
@@ -355,22 +360,22 @@ ListenerPtr listen_tls(int port, const std::string& cert_path,
     if (::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
         pcs_close_socket(fd);
         SSL_CTX_free(ctx);
-        error = "cannot bind port " + std::to_string(port) +
+        error = "cannot bind port " + to_string(port) +
                 " (is another server already running?)";
         return nullptr;
     }
     if (::listen(fd, 32) != 0) {
         pcs_close_socket(fd);
         SSL_CTX_free(ctx);
-        error = "cannot listen on port " + std::to_string(port);
+        error = "cannot listen on port " + to_string(port);
         return nullptr;
     }
 
     return ListenerPtr(new TlsListener(fd, ctx));
 }
 
-bool write_self_signed_cert(const std::string& cert_path,
-                            const std::string& key_path, std::string& error) {
+bool write_self_signed_cert(const string& cert_path,
+                            const string& key_path, string& error) {
     net_startup();
 
     EVP_PKEY* pkey = nullptr;
@@ -409,20 +414,20 @@ bool write_self_signed_cert(const std::string& cert_path,
 
     bool ok = X509_sign(cert, pkey, EVP_sha256()) > 0;
     if (ok) {
-        FILE* cert_file = std::fopen(cert_path.c_str(), "wb");
+        FILE* cert_file = fopen(cert_path.c_str(), "wb");
         ok = cert_file != nullptr;
         if (cert_file) {
             ok = PEM_write_X509(cert_file, cert) == 1;
-            std::fclose(cert_file);
+            fclose(cert_file);
         }
     }
     if (ok) {
-        FILE* key_file = std::fopen(key_path.c_str(), "wb");
+        FILE* key_file = fopen(key_path.c_str(), "wb");
         ok = key_file != nullptr;
         if (key_file) {
             ok = PEM_write_PrivateKey(key_file, pkey, nullptr, nullptr, 0,
                                       nullptr, nullptr) == 1;
-            std::fclose(key_file);
+            fclose(key_file);
         }
     }
 

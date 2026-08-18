@@ -6,6 +6,8 @@
 #include "pcs/protocol.hpp"
 #include "pcs/safename.hpp"
 
+using namespace std;
+
 namespace fs = std::filesystem;
 
 namespace pcs {
@@ -14,8 +16,8 @@ namespace {
 constexpr char kMagic[] = "pcs-manifest";
 constexpr int kVersion = 2;
 
-// std::stoi throws on malformed text; the parser should just reject the line.
-bool parse_int(const std::string& text, int low, int high, int& out) {
+// stoi throws on malformed text; the parser should just reject the line.
+bool parse_int(const string& text, int low, int high, int& out) {
     uint64_t value = 0;
     if (!proto::parse_size(text, static_cast<uint64_t>(high), value))
         return false;
@@ -26,8 +28,8 @@ bool parse_int(const std::string& text, int low, int high, int& out) {
 
 }  // namespace
 
-bool Manifest::write(const fs::path& path, std::string& error) const {
-    std::ofstream out(path, std::ios::trunc);
+bool Manifest::write(const fs::path& path, string& error) const {
+    ofstream out(path, ios::trunc);
     if (!out) {
         error = "cannot write " + path.string();
         return false;
@@ -51,37 +53,37 @@ bool Manifest::write(const fs::path& path, std::string& error) const {
     return true;
 }
 
-bool Manifest::read(const fs::path& path, Manifest& out, std::string& error) {
-    std::ifstream in(path);
+bool Manifest::read(const fs::path& path, Manifest& out, string& error) {
+    ifstream in(path);
     if (!in) {
         error = "cannot read " + path.string();
         return false;
     }
 
-    std::string line;
-    if (!std::getline(in, line)) {
+    string line;
+    if (!getline(in, line)) {
         error = "manifest is empty";
         return false;
     }
     {
-        std::vector<std::string> head = proto::split(line);
+        vector<string> head = proto::split(line);
         if (head.size() != 2 || head[0] != kMagic) {
             error = "not a manifest file";
             return false;
         }
-        if (head[1] != std::to_string(kVersion)) {
+        if (head[1] != to_string(kVersion)) {
             error = "unsupported manifest version " + head[1];
             return false;
         }
     }
 
     Manifest parsed;
-    while (std::getline(in, line)) {
+    while (getline(in, line)) {
         if (line.empty()) continue;
-        std::vector<std::string> f = proto::split(line);
+        vector<string> f = proto::split(line);
         if (f.empty()) continue;
 
-        const std::string& key = f[0];
+        const string& key = f[0];
         if (key == "server" && f.size() == 2) {
             parsed.server = f[1];
         } else if (key == "name" && f.size() == 2) {
@@ -130,18 +132,18 @@ bool Manifest::read(const fs::path& path, Manifest& out, std::string& error) {
         return false;
     }
 
-    out = std::move(parsed);
+    out = move(parsed);
     return true;
 }
 
-bool peek_manifest_server(const fs::path& path, std::string& server) {
-    std::ifstream in(path);
+bool peek_manifest_server(const fs::path& path, string& server) {
+    ifstream in(path);
     if (!in) return false;
 
-    std::string line;
-    std::getline(in, line);  // magic + version
-    while (std::getline(in, line)) {
-        std::vector<std::string> f = proto::split(line);
+    string line;
+    getline(in, line);  // magic + version
+    while (getline(in, line)) {
+        vector<string> f = proto::split(line);
         if (f.size() == 2 && f[0] == "server") {
             server = f[1];
             return true;

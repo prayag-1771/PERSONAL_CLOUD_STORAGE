@@ -5,6 +5,8 @@
 
 #include "pcs/config.hpp"
 
+using namespace std;
+
 namespace pcs {
 namespace {
 
@@ -20,18 +22,18 @@ struct CipherCtx {
 
 }  // namespace
 
-std::vector<uint8_t> derive_key(const std::string& passphrase,
-                                const std::vector<uint8_t>& salt,
-                                const std::string& label,
+vector<uint8_t> derive_key(const string& passphrase,
+                                const vector<uint8_t>& salt,
+                                const string& label,
                                 uint32_t iterations) {
     // The label is prefixed to the salt so that two different purposes never
     // share a key, even when passphrase and salt are identical.
-    std::vector<uint8_t> full;
+    vector<uint8_t> full;
     full.reserve(label.size() + salt.size());
     full.insert(full.end(), label.begin(), label.end());
     full.insert(full.end(), salt.begin(), salt.end());
 
-    std::vector<uint8_t> key(config::kKeyLen);
+    vector<uint8_t> key(config::kKeyLen);
     if (PKCS5_PBKDF2_HMAC(passphrase.data(),
                           static_cast<int>(passphrase.size()),
                           full.data(), static_cast<int>(full.size()),
@@ -42,26 +44,26 @@ std::vector<uint8_t> derive_key(const std::string& passphrase,
     return key;
 }
 
-std::vector<uint8_t> derive_dedup_key(const std::string& passphrase) {
+vector<uint8_t> derive_dedup_key(const string& passphrase) {
     // A fixed salt, deliberately: the tag has to be reproducible across files
     // and across runs, otherwise deduplication could never match anything.
-    const std::string label = config::kDedupKeyLabel;
-    std::vector<uint8_t> salt(label.begin(), label.end());
+    const string label = config::kDedupKeyLabel;
+    vector<uint8_t> salt(label.begin(), label.end());
     return derive_key(passphrase, salt, label, config::kKdfIterations);
 }
 
-std::vector<uint8_t> random_bytes(size_t n) {
-    std::vector<uint8_t> out(n);
+vector<uint8_t> random_bytes(size_t n) {
+    vector<uint8_t> out(n);
     if (n > 0 && RAND_bytes(out.data(), static_cast<int>(n)) != 1) return {};
     return out;
 }
 
-bool aes_gcm_seal(const std::vector<uint8_t>& key,
-                  const std::vector<uint8_t>& iv,
-                  const std::vector<uint8_t>& aad,
+bool aes_gcm_seal(const vector<uint8_t>& key,
+                  const vector<uint8_t>& iv,
+                  const vector<uint8_t>& aad,
                   const uint8_t* plain, size_t plain_len,
-                  std::vector<uint8_t>& out,
-                  std::vector<uint8_t>& tag) {
+                  vector<uint8_t>& out,
+                  vector<uint8_t>& tag) {
     if (key.size() != config::kKeyLen || iv.size() != config::kIvLen) return false;
 
     CipherCtx c;
@@ -100,12 +102,12 @@ bool aes_gcm_seal(const std::vector<uint8_t>& key,
     return true;
 }
 
-bool aes_gcm_open(const std::vector<uint8_t>& key,
-                  const std::vector<uint8_t>& iv,
-                  const std::vector<uint8_t>& aad,
+bool aes_gcm_open(const vector<uint8_t>& key,
+                  const vector<uint8_t>& iv,
+                  const vector<uint8_t>& aad,
                   const uint8_t* cipher, size_t cipher_len,
-                  const std::vector<uint8_t>& tag,
-                  std::vector<uint8_t>& out) {
+                  const vector<uint8_t>& tag,
+                  vector<uint8_t>& out) {
     if (key.size() != config::kKeyLen || iv.size() != config::kIvLen) return false;
     if (tag.size() != config::kTagLen) return false;
 

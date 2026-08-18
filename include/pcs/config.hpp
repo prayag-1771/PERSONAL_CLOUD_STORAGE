@@ -44,5 +44,10 @@ inline constexpr int    kConnectTimeoutS = 3;
 // streaming an unbounded "line" to exhaust memory.
 inline constexpr size_t kMaxLineLen = 4096;
 
+// Upper bound on any single declared transfer size. Sizes arrive as text
+// from the network, so they are clamped before they can become an
+// allocation or a disk reservation.
+inline constexpr uint64_t kMaxTransferSize = 1ull << 40;  // 1 TiB
+
 }  // namespace config
 }  // namespace pcs

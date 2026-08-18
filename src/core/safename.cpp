@@ -2,6 +2,8 @@
 
 #include <cctype>
 
+using namespace std;
+
 namespace pcs {
 namespace {
 
@@ -10,7 +12,7 @@ constexpr char kBackslash = 92;
 
 }  // namespace
 
-bool is_safe_name(const std::string& name) {
+bool is_safe_name(const string& name) {
     if (name.empty() || name.size() > 255) return false;
     if (name == "." || name == "..") return false;
     if (name.front() == '.') return false;   // no dotfiles, no ".." prefixes
@@ -24,7 +26,7 @@ bool is_safe_name(const std::string& name) {
     return true;
 }
 
-bool is_safe_chunk_id(const std::string& id) {
+bool is_safe_chunk_id(const string& id) {
     if (id.size() != 64) return false;
     for (char c : id) {
         bool digit = c >= '0' && c <= '9';

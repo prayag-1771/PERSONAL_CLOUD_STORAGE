@@ -2,6 +2,8 @@
 
 #include "pcs/gf256.hpp"
 
+using namespace std;
+
 namespace pcs {
 
 const char* shard_name(Shard s) {
@@ -23,7 +25,7 @@ void make_parity1(const uint8_t* d0, const uint8_t* d1, size_t n, uint8_t* out) 
         out[i] = static_cast<uint8_t>(gf_mul(d0[i], 2) ^ gf_mul(d1[i], 3));
 }
 
-bool choose_pair(const std::array<bool, 4>& present, ShardPair& out) {
+bool choose_pair(const array<bool, 4>& present, ShardPair& out) {
     // Ordered cheapest first: the plain-copy case, then the XOR cases, then
     // the two that need a GF inverse.
     static const ShardPair kOrder[] = {
@@ -46,7 +48,7 @@ bool choose_pair(const std::array<bool, 4>& present, ShardPair& out) {
 }
 
 bool reconstruct(ShardPair pair, const uint8_t* a, const uint8_t* b, size_t n,
-                 std::vector<uint8_t>& d0, std::vector<uint8_t>& d1) {
+                 vector<uint8_t>& d0, vector<uint8_t>& d1) {
     d0.assign(n, 0);
     d1.assign(n, 0);
 

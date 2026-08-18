@@ -2,11 +2,13 @@
 
 #include <cctype>
 
+using namespace std;
+
 namespace pcs {
 namespace proto {
 
-std::vector<std::string> split(const std::string& line) {
-    std::vector<std::string> parts;
+vector<string> split(const string& line) {
+    vector<string> parts;
     size_t i = 0;
     while (i < line.size()) {
         while (i < line.size() && line[i] == ' ') i++;
@@ -17,7 +19,7 @@ std::vector<std::string> split(const std::string& line) {
     return parts;
 }
 
-bool parse_size(const std::string& text, uint64_t limit, uint64_t& out) {
+bool parse_size(const string& text, uint64_t limit, uint64_t& out) {
     if (text.empty() || text.size() > 20) return false;
 
     uint64_t value = 0;
