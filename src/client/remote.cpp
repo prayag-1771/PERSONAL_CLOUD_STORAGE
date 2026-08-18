@@ -18,9 +18,10 @@ Remote::Remote(ChannelPtr channel) : channel_(move(channel)) {}
 Remote::~Remote() = default;
 
 unique_ptr<Remote> Remote::connect(const string& address,
-                                        const Credentials& credentials,
-                                        Access access, string& error) {
-    ChannelPtr channel = dial(address, error);
+                                        const Options& options, Access access,
+                                        string& error) {
+    const Credentials& credentials = options.credentials;
+    ChannelPtr channel = dial(address, options.trust, error);
     if (!channel) return nullptr;
 
     unique_ptr<Remote> remote(new Remote(move(channel)));
@@ -83,9 +84,9 @@ unique_ptr<Remote> Remote::connect(const string& address,
     return remote;
 }
 
-bool Remote::reachable(const string& address) {
+bool Remote::reachable(const string& address, const TlsTrust& trust) {
     string error;
-    ChannelPtr channel = dial(address, error);
+    ChannelPtr channel = dial(address, trust, error);
     if (!channel) return false;
 
     string reply;

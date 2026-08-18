@@ -33,9 +33,24 @@ public:
     bool send_line(const std::string& line);
 };
 
+// What the client requires of the server it reaches.
+struct TlsTrust {
+    // PEM file holding the CA certificate the group issues under.
+    std::string ca_file;
+
+    // Turning this off accepts any certificate and skips the name check. It
+    // exists only for the first connection to a server whose CA you have not
+    // collected yet; leaving it off means an attacker on the network can
+    // impersonate the server.
+    bool verify = true;
+};
+
 // Client side. `address` is "host:port"; the host may be a name or a literal
-// IPv4/IPv6 address. Returns nullptr if the connection or handshake fails.
-ChannelPtr dial(const std::string& address, std::string& error);
+// IPv4/IPv6 address. When `trust.verify` is set, the certificate must chain
+// to the CA and must actually cover the host being dialled. Returns nullptr
+// if the connection, the handshake or the verification fails.
+ChannelPtr dial(const std::string& address, const TlsTrust& trust,
+                std::string& error);
 
 // Server side.
 class Listener {
@@ -52,9 +67,5 @@ using ListenerPtr = std::unique_ptr<Listener>;
 // Binds `port` and serves the given certificate. Returns nullptr on failure.
 ListenerPtr listen_tls(int port, const std::string& cert_path,
                        const std::string& key_path, std::string& error);
-
-// Writes a fresh self-signed certificate/key pair, used on first run.
-bool write_self_signed_cert(const std::string& cert_path,
-                            const std::string& key_path, std::string& error);
 
 }  // namespace pcs

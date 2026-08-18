@@ -45,6 +45,10 @@ want() { if echo "$2" | grep -q "$3"; then ok "$1"; else bad "$1 (expected '$3')
 same() { if cmp -s "$2" "$3"; then ok "$1"; else bad "$1 (files differ)"; fi; }
 
 start_server() {
+    mkdir -p "$LAB/srv$1"
+    if [ "$1" != "$BASE_PORT" ] && [ -f "$LAB/srv$BASE_PORT/ca.crt" ]; then
+        cp "$LAB/srv$BASE_PORT/ca.crt" "$LAB/srv$BASE_PORT/ca.key" "$LAB/srv$1/"
+    fi
     "$BUILD/pcs-server" "$1" --root "$LAB/srv$1" > "$LAB/srv$1.log" 2>&1 &
     SERVER_PIDS+=($!)
     echo $!
@@ -61,9 +65,21 @@ SERVER="127.0.0.1:$MAIN"
 mkdir -p "$LAB/work"
 cd "$LAB/work" || exit 1
 
-echo "=== accounts ==="
+echo "=== the local certificate authority ==="
 MAIN_PID=$(start_server $MAIN)
-sleep 1
+sleep 2
+
+[ -f "$LAB/srv$MAIN/ca.crt" ] && ok "a CA was created on first run"                              || bad "no CA certificate was created"
+
+# Every later client call verifies the server against this.
+export PCS_CACERT="$LAB/srv$MAIN/ca.crt"
+
+"$BUILD/pcs-server" $MAIN --root "$LAB/srv$MAIN" ca-export "$LAB/exported.crt" > /dev/null 2>&1
+[ -f "$LAB/exported.crt" ] && ok "the CA can be exported for installing"                            || bad "ca-export produced nothing"
+
+CA_BEFORE=$(cat "$LAB/srv$MAIN/ca.crt")
+
+echo "=== accounts ==="
 
 # useradd prompts twice; feeding it on stdin keeps the test unattended.
 printf "%s\n%s\n" "$PCS_PASSWORD" "$PCS_PASSWORD" | \
@@ -124,6 +140,20 @@ want "a bad machine token does not block ordinary uploads" \
      "Stored"
 want "a traversal name is refused" \
      "$(client download ../../etc/passwd $SERVER)" "Not a valid stored name"
+
+echo "=== a server under a different authority is refused ==="
+STRANGER=$((BASE_PORT + 8))
+mkdir -p "$LAB/srv$STRANGER"        # no CA copied in, so it mints its own
+"$BUILD/pcs-server" $STRANGER --root "$LAB/srv$STRANGER"     > "$LAB/srv$STRANGER.log" 2>&1 &
+SERVER_PIDS+=($!)
+sleep 2
+
+want "a certificate from an unknown CA is rejected"      "$(client list 127.0.0.1:$STRANGER)"      "certificate rejected"
+
+# The same server is reachable once verification is deliberately waived,
+# which shows the refusal above came from verification and not from a
+# server that was simply down.
+want "the same server is reachable with --insecure"      "$("$BUILD/pcs-client" --token "$TOKEN" --insecure --quiet         list 127.0.0.1:$STRANGER 2>&1)"      "rejected that account or password"
 
 echo "=== accounts are isolated from each other ==="
 BOB_LIST=$(PCS_USER=bob PCS_PASSWORD="$BOB_PASSWORD" client list $SERVER)
@@ -215,6 +245,13 @@ wait $DAEMON 2>/dev/null
 rm -f watched.bin
 client download watched.bin $SERVER > /dev/null
 same "the autosynced file downloads intact" watched.bin original.bin
+
+echo "=== the CA survives a restart ==="
+if [ "$CA_BEFORE" = "$(cat "$LAB/srv$MAIN/ca.crt")" ]; then
+    ok "the CA was not regenerated across restarts"
+else
+    bad "the CA changed, which would break every installed copy"
+fi
 
 echo "=== memory does not track file size ==="
 head -c 60000000 /dev/urandom > huge.bin

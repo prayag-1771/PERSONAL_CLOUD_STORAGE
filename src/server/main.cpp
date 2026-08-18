@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -8,6 +9,7 @@
 #include "pcs/config.hpp"
 #include "pcs/keysource.hpp"
 #include "pcs/protocol.hpp"
+#include "pcs/tlsca.hpp"
 #include "pcs/wire.hpp"
 #include "session.hpp"
 #include "store.hpp"
@@ -31,10 +33,16 @@ void print_usage() {
         << "  userlist          show the accounts on this server\n"
         << "  passwd <name>     change an account password\n"
         << "\n"
+        << "Certificate commands:\n"
+        << "  ca-export <path>  copy the CA certificate somewhere, ready to\n"
+        << "                    install on a phone or laptop\n"
+        << "\n"
         << "Options:\n"
         << "  --root <dir>      data directory\n"
         << "                    (default: ./storage/server_<port>)\n"
         << "  --token <token>   shared machine token, or set PCS_TOKEN\n"
+        << "  --host <name>     an extra name or address this server is\n"
+        << "                    reached by; repeatable\n"
         << "\n"
         << "Each account has its own storage and its own passphrase, so one\n"
         << "person cannot read another's files. Peers that hold shards for\n"
@@ -138,6 +146,7 @@ int main(int argc, char* argv[]) {
 
     fs::path root = fs::current_path() / "storage" / ("server_" + port_text);
     string forced_token;
+    vector<string> extra_hosts;
     string command;
     vector<string> command_args;
 
@@ -147,6 +156,8 @@ int main(int argc, char* argv[]) {
             root = argv[++i];
         } else if (arg == "--token" && i + 1 < argc) {
             forced_token = argv[++i];
+        } else if (arg == "--host" && i + 1 < argc) {
+            extra_hosts.push_back(argv[++i]);
         } else if (arg.rfind("--", 0) == 0) {
             cerr << "Unknown option: " << arg << "\n";
             return 1;
@@ -172,6 +183,29 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    if (command == "ca-export") {
+        if (command_args.empty()) {
+            cout << "Usage: pcs-server <port> ca-export <path>\n";
+            return 1;
+        }
+        const fs::path source = root / "ca.crt";
+        if (!fs::exists(source)) {
+            cout << "No CA yet. Start the server once so it can create one.\n";
+            return 1;
+        }
+        error_code ec;
+        fs::copy_file(source, command_args[0],
+                      fs::copy_options::overwrite_existing, ec);
+        if (ec) {
+            cout << "Cannot copy the CA certificate: " << ec.message() << "\n";
+            return 1;
+        }
+        cout << "Wrote " << command_args[0] << "\n"
+             << "Install it as a trusted root on each device, and point the\n"
+             << "command-line client at it with --cacert.\n";
+        return 0;
+    }
+
     if (!command.empty())
         return run_account_command(command, command_args, users);
 
@@ -183,14 +217,35 @@ int main(int argc, char* argv[]) {
             ? pcs::server::load_or_create_token(root / "auth.token")
             : forced_token;
 
-    const fs::path cert = root / "server.crt";
-    const fs::path key  = root / "server.key";
-    if (!fs::exists(cert) || !fs::exists(key)) {
-        if (!pcs::write_self_signed_cert(cert.string(), key.string(), error)) {
-            cerr << "Cannot create TLS certificate: " << error << "\n";
+    const fs::path ca_cert = root / "ca.crt";
+    const fs::path ca_key  = root / "ca.key";
+    const fs::path cert    = root / "server.crt";
+    const fs::path key     = root / "server.key";
+
+    if (!pcs::ensure_ca(ca_cert.string(), ca_key.string(), error)) {
+        cerr << "Cannot prepare the local CA: " << error << "\n";
+        return 1;
+    }
+
+    vector<string> hosts = pcs::local_host_identities();
+    hosts.insert(hosts.end(), extra_hosts.begin(), extra_hosts.end());
+    sort(hosts.begin(), hosts.end());
+    hosts.erase(unique(hosts.begin(), hosts.end()), hosts.end());
+
+    // Reissued when it is missing, close to expiry, or does not cover a name
+    // that has been added since it was written.
+    if (!fs::exists(key) ||
+        pcs::server_cert_needs_reissue(cert.string(), hosts, 30)) {
+        if (!pcs::issue_server_cert(ca_cert.string(), ca_key.string(),
+                                    cert.string(), key.string(), hosts,
+                                    error)) {
+            cerr << "Cannot issue the server certificate: " << error << "\n";
             return 1;
         }
-        cout << "[server] generated a self-signed TLS certificate\n";
+        cout << "[server] issued a certificate for: ";
+        for (size_t i = 0; i < hosts.size(); i++)
+            cout << (i ? ", " : "") << hosts[i];
+        cout << "\n";
     }
 
     pcs::ListenerPtr listener =
@@ -203,7 +258,10 @@ int main(int argc, char* argv[]) {
     cout << "[server] protocol " << pcs::config::kProtocol << " on port "
          << port << " (TLS)\n"
          << "[server] data root: " << root.string() << "\n"
-         << "[server] machine token: " << token << "\n";
+         << "[server] machine token: " << token << "\n"
+         << "[server] CA certificate: " << ca_cert.string() << "\n"
+         << "[server] install that on each device, or export a copy with:\n"
+         << "[server]   pcs-server " << port_text << " ca-export <path>\n";
 
     if (users.empty()) {
         cout << "[server] no accounts yet - nobody can store anything.\n"

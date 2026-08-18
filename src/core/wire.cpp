@@ -37,8 +37,10 @@ static constexpr socket_t kBadSocket = -1;
 #include <openssl/rsa.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
+#include <openssl/x509v3.h>
 
 #include "pcs/config.hpp"
+#include "pcs/tlsca.hpp"
 
 using namespace std;
 
@@ -250,7 +252,7 @@ private:
 
 }  // namespace
 
-ChannelPtr dial(const string& address, string& error) {
+ChannelPtr dial(const string& address, const TlsTrust& trust, string& error) {
     net_startup();
 
     string host, port;
@@ -297,11 +299,26 @@ ChannelPtr dial(const string& address, string& error) {
         return nullptr;
     }
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
-    // The server presents a self-signed certificate generated on first run,
-    // so there is no chain to verify. Confidentiality comes from TLS, and
-    // authorisation from the token; a man in the middle still cannot read
-    // file contents, which are encrypted before they ever reach the socket.
-    SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, nullptr);
+
+    if (trust.verify) {
+        if (trust.ca_file.empty()) {
+            SSL_CTX_free(ctx);
+            pcs_close_socket(fd);
+            error = "no CA certificate given: pass --cacert, set PCS_CACERT, "
+                    "or use --insecure to accept any certificate";
+            return nullptr;
+        }
+        if (SSL_CTX_load_verify_locations(ctx, trust.ca_file.c_str(),
+                                          nullptr) != 1) {
+            SSL_CTX_free(ctx);
+            pcs_close_socket(fd);
+            error = "cannot read the CA certificate " + trust.ca_file;
+            return nullptr;
+        }
+        SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, nullptr);
+    } else {
+        SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, nullptr);
+    }
 
     SSL* ssl = SSL_new(ctx);
     if (!ssl) {
@@ -313,11 +330,36 @@ ChannelPtr dial(const string& address, string& error) {
     SSL_set_fd(ssl, static_cast<int>(fd));
     SSL_set_tlsext_host_name(ssl, host.c_str());
 
+    if (trust.verify) {
+        // Verifying the chain is not enough on its own: without this, the
+        // certificate of any machine in the group would be accepted for any
+        // other. A literal address is matched against the IP entries and a
+        // name against the DNS entries, which are checked separately.
+        X509_VERIFY_PARAM* param = SSL_get0_param(ssl);
+        X509_VERIFY_PARAM_set_hostflags(param,
+                                        X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
+        const int named =
+            looks_like_ip(host)
+                ? X509_VERIFY_PARAM_set1_ip_asc(param, host.c_str())
+                : X509_VERIFY_PARAM_set1_host(param, host.c_str(), 0);
+        if (named != 1) {
+            SSL_free(ssl);
+            SSL_CTX_free(ctx);
+            pcs_close_socket(fd);
+            error = "cannot check the certificate against " + host;
+            return nullptr;
+        }
+    }
+
     if (SSL_connect(ssl) <= 0) {
+        const long result = SSL_get_verify_result(ssl);
+        error = result != X509_V_OK
+                    ? "certificate rejected for " + address + ": " +
+                          X509_verify_cert_error_string(result)
+                    : "TLS handshake failed with " + address;
         SSL_free(ssl);
         SSL_CTX_free(ctx);
         pcs_close_socket(fd);
-        error = "TLS handshake failed with " + address;
         return nullptr;
     }
 
@@ -373,70 +415,6 @@ ListenerPtr listen_tls(int port, const string& cert_path,
     }
 
     return ListenerPtr(new TlsListener(fd, ctx));
-}
-
-bool write_self_signed_cert(const string& cert_path,
-                            const string& key_path, string& error) {
-    net_startup();
-
-    EVP_PKEY* pkey = nullptr;
-    EVP_PKEY_CTX* pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, nullptr);
-    if (!pctx) {
-        error = "cannot create key context";
-        return false;
-    }
-    if (EVP_PKEY_keygen_init(pctx) <= 0 ||
-        EVP_PKEY_CTX_set_rsa_keygen_bits(pctx, 2048) <= 0 ||
-        EVP_PKEY_keygen(pctx, &pkey) <= 0) {
-        EVP_PKEY_CTX_free(pctx);
-        error = "key generation failed: " + ssl_error_text();
-        return false;
-    }
-    EVP_PKEY_CTX_free(pctx);
-
-    X509* cert = X509_new();
-    if (!cert) {
-        EVP_PKEY_free(pkey);
-        error = "cannot allocate certificate";
-        return false;
-    }
-
-    ASN1_INTEGER_set(X509_get_serialNumber(cert), 1);
-    X509_gmtime_adj(X509_getm_notBefore(cert), 0);
-    X509_gmtime_adj(X509_getm_notAfter(cert), 365L * 24 * 3600);
-    X509_set_version(cert, 2);  // v3
-    X509_set_pubkey(cert, pkey);
-
-    X509_NAME* name = X509_get_subject_name(cert);
-    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
-                               reinterpret_cast<const unsigned char*>("personal-cloud-storage"),
-                               -1, -1, 0);
-    X509_set_issuer_name(cert, name);
-
-    bool ok = X509_sign(cert, pkey, EVP_sha256()) > 0;
-    if (ok) {
-        FILE* cert_file = fopen(cert_path.c_str(), "wb");
-        ok = cert_file != nullptr;
-        if (cert_file) {
-            ok = PEM_write_X509(cert_file, cert) == 1;
-            fclose(cert_file);
-        }
-    }
-    if (ok) {
-        FILE* key_file = fopen(key_path.c_str(), "wb");
-        ok = key_file != nullptr;
-        if (key_file) {
-            ok = PEM_write_PrivateKey(key_file, pkey, nullptr, nullptr, 0,
-                                      nullptr, nullptr) == 1;
-            fclose(key_file);
-        }
-    }
-
-    X509_free(cert);
-    EVP_PKEY_free(pkey);
-
-    if (!ok) error = "cannot write certificate or key file";
-    return ok;
 }
 
 }  // namespace pcs

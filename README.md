@@ -51,6 +51,7 @@ tests/            unit tests, plus an end-to-end script
 | `protocol` | one definition of the wire grammar, shared by both ends |
 | `manifest` | the record of a file waiting to reach the server |
 | `passwd` | account password verifiers |
+| `tlsca` | the local certificate authority |
 | `keysource` | where the passphrase comes from |
 | `safename` | what may become a path |
 | `progress` | the progress bar |
@@ -236,6 +237,10 @@ It does give you:
 - **Tamper detection.** Every block is authenticated, so altered data fails
   to open instead of decrypting into garbage.
 - **Transport encryption**, on top of that, via TLS 1.2 or newer.
+- **A verified server identity.** The client checks that the certificate
+  chains to your CA *and* that it actually covers the address being dialled,
+  so a machine in the group cannot stand in for another one, and an outsider
+  cannot stand in at all.
 - **Access control**, by way of a 32-byte token compared in constant time. A
   wrong token drops the connection, so an attacker gets one guess per
   handshake.
@@ -245,11 +250,12 @@ It does give you:
 
 It does not give you:
 
-- **A verified server identity.** The certificate is self-signed and the
-  client does not pin it, so someone positioned on your network could
-  impersonate the server. They would still see only ciphertext, but they
-  could serve you the wrong file or collect your token. Fine on a LAN you
-  control; think twice before exposing the port to the open internet.
+- **Anything if you use `--insecure`.** That switch exists for the first
+  connection to a server whose CA you have not collected yet, and it accepts
+  any certificate from anyone. It warns each time it is used.
+- **Protection if the CA key leaks.** `ca.key` can issue a certificate any
+  client in the group will trust. It sits in the server's data directory;
+  treat it like a password.
 - **Protection from a weak passphrase.** PBKDF2 at 100,000 iterations slows
   guessing down, it does not stop it.
 - **Recovery if you forget the passphrase.** There is no escrow and no reset.

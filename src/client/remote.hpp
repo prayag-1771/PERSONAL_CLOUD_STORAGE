@@ -31,12 +31,13 @@ public:
     // Connects, performs the version handshake, and proves whatever the
     // requested access requires.
     static std::unique_ptr<Remote> connect(const std::string& address,
-                                           const Credentials& credentials,
+                                           const Options& options,
                                            Access access, std::string& error);
 
     // Liveness probe. Deliberately needs no token, so deciding whether to
     // fall back to peers is a single cheap round trip.
-    static bool reachable(const std::string& address);
+    static bool reachable(const std::string& address,
+                          const TlsTrust& trust);
 
     // `exists` distinguishes "no such file" from a failed request.
     bool stat(const std::string& name, uint64_t& size, std::string& tag,

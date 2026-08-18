@@ -88,12 +88,12 @@ int cmd_download(const Options& opt, const string& name,
         return 1;
     }
 
-    if (!Remote::reachable(opt.server)) {
+    if (!Remote::reachable(opt.server, opt.trust)) {
         cout << "Server " << opt.server << " is offline. Trying peers.\n";
         return recover_from_peers(opt, workspace, name, destination);
     }
 
-    unique_ptr<Remote> remote = Remote::connect(opt.server, opt.credentials, Access::Files, error);
+    unique_ptr<Remote> remote = Remote::connect(opt.server, opt, Access::Files, error);
     if (!remote) {
         cout << "Cannot reach the server: " << error << "\n";
         return 1;

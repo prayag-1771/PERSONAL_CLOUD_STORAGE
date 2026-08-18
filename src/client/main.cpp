@@ -41,6 +41,9 @@ void print_usage() {
         << "                    peers (or set PCS_TOKEN)\n"
         << "  --keyfile <path>  read the passphrase from a file instead of\n"
         << "                    prompting (or set PCS_PASSPHRASE)\n"
+        << "  --cacert <path>   CA certificate to verify the server against"
+        << "                    (or set PCS_CACERT)\n"
+        << "  --insecure        skip verification; only for bootstrapping\n"
         << "  --dir <path>      where pending files are tracked (default: .)\n"
         << "  --quiet           no progress bars\n"
         << "  -h, --help        this message\n"
@@ -73,6 +76,10 @@ bool parse_arguments(int argc, char* argv[], pcs::client::Options& options,
             options.key.keyfile = argv[++i];
         } else if (arg == "--dir" && i + 1 < argc) {
             options.work_dir = argv[++i];
+        } else if (arg == "--cacert" && i + 1 < argc) {
+            options.trust.ca_file = argv[++i];
+        } else if (arg == "--insecure") {
+            options.trust.verify = false;
         } else if (arg.rfind("--", 0) == 0) {
             cout << "Unknown option: " << arg << "\n";
             return false;
@@ -103,6 +110,21 @@ int main(int argc, char* argv[]) {
     if (wants_help || positional.empty()) {
         print_usage();
         return positional.empty() && !wants_help ? 1 : 0;
+    }
+
+    if (options.trust.ca_file.empty()) {
+        if (const char* from_env = getenv("PCS_CACERT"))
+            options.trust.ca_file = from_env;
+    }
+    if (options.trust.verify && options.trust.ca_file.empty()) {
+        cout << "No CA certificate given, so the server cannot be verified.\n"
+             << "Copy ca.crt from the server and pass --cacert <path>, or"
+             << " set PCS_CACERT. Use --insecure only if you accept that"
+             << " anyone on the network could impersonate the server.\n";
+        return 1;
+    }
+    if (!options.trust.verify) {
+        cout << "Warning: --insecure, the server is not being verified." << endl;
     }
 
     if (options.credentials.token.empty()) {

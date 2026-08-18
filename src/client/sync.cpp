@@ -49,7 +49,7 @@ bool sync_one(const Options& opt, const Workspace& workspace,
         return false;
 
     unique_ptr<Remote> remote =
-        Remote::connect(manifest.server, opt.credentials, Access::Files, error);
+        Remote::connect(manifest.server, opt, Access::Files, error);
     if (!remote) return false;
 
     uint64_t existing_size = 0;
@@ -102,7 +102,7 @@ SyncResult sync_once(const Options& opt, const Workspace& workspace,
             manifest_path.stem().string();  // the original file name
 
         // Cheap probe first: no point rebuilding a file we cannot deliver.
-        if (!Remote::reachable(server)) {
+        if (!Remote::reachable(server, opt.trust)) {
             if (verbose)
                 cout << label << ": " << server << " still offline\n";
             result.waiting++;

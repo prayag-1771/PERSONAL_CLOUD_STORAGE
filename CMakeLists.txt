@@ -30,6 +30,7 @@ add_library(pcs_core STATIC
     src/core/safename.cpp
     src/core/shardfile.cpp
     src/core/stream.cpp
+    src/core/tlsca.cpp
     src/core/wire.cpp
 )
 
@@ -101,6 +102,7 @@ if(PCS_BUILD_TESTS)
         tests/test_passwd.cpp
         tests/test_shardfile.cpp
         tests/test_stream.cpp
+        tests/test_tlsca.cpp
     )
     target_include_directories(pcs-tests PRIVATE tests)
     target_link_libraries(pcs-tests PRIVATE pcs_core)

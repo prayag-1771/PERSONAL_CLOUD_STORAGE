@@ -13,7 +13,7 @@ namespace client {
 
 int cmd_list(const Options& opt) {
     string error;
-    unique_ptr<Remote> remote = Remote::connect(opt.server, opt.credentials, Access::Files, error);
+    unique_ptr<Remote> remote = Remote::connect(opt.server, opt, Access::Files, error);
     if (!remote) {
         cout << "Cannot reach the server: " << error << "\n";
         return 1;

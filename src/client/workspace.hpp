@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "pcs/keysource.hpp"
+#include "pcs/wire.hpp"
 
 namespace pcs {
 namespace client {
@@ -21,6 +22,7 @@ struct Credentials {
 // Everything a command needs that came from the command line.
 struct Options {
     Credentials credentials;
+    TlsTrust trust;
     std::string server;
     std::vector<std::string> peers;
     KeyOptions key;
