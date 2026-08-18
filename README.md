@@ -131,7 +131,11 @@ to peers should not cost a token round trip.
 
 ## Building
 
-Needs a C++17 compiler, OpenSSL 1.1.1 or newer, and CMake 3.16+.
+Needs a C++17 compiler, OpenSSL, and CMake 3.16+.
+
+Built and tested against g++ 13.3 with OpenSSL 3.0 on Linux. There is a
+fallback path for OpenSSL 1.1.1 in `src/core/digest.cpp`, but it has not been
+compiled against that version, so treat 1.1.1 as unverified.
 
 ```bash
 cmake -S . -B build
@@ -140,8 +144,10 @@ cmake --build build
 
 That produces `build/pcs-server`, `build/pcs-client` and `build/pcs-tests`.
 
-On Windows the socket layer uses Winsock; everything above it is the same
-code. If you are on Windows without a native toolchain, WSL works well.
+The socket layer has a Winsock path so the tree can build on Windows, and
+everything above that layer is platform-neutral. That path has not been
+compiled yet, though, so a native Windows build should be expected to need
+some fixing. WSL is the tested route on a Windows machine.
 
 ## Using it
 
