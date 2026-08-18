@@ -26,6 +26,10 @@ void print_usage() {
         << "        when it is up; otherwise the four peers hold the pieces.\n"
         << "  download <name> <server> [output-path]\n"
         << "        Fetch and decrypt a file, from the server or from peers.\n"
+        << "  seal <file> <output>\n"
+        << "        Encrypt a file locally, without a server.\n"
+        << "  open <file> <output>\n"
+        << "        Decrypt a file that was sealed locally.\n"
         << "  list <server>\n"
         << "        Show what the server is holding.\n"
         << "  sync\n"
@@ -112,18 +116,24 @@ int main(int argc, char* argv[]) {
         return positional.empty() && !wants_help ? 1 : 0;
     }
 
+    // seal and open touch no server, so they need neither an account nor a
+    // certificate to verify.
+    const string first = positional[0];
+    const bool is_local = first == "seal" || first == "open";
+    if (is_local) options.trust.verify = false;
+
     if (options.trust.ca_file.empty()) {
         if (const char* from_env = getenv("PCS_CACERT"))
             options.trust.ca_file = from_env;
     }
-    if (options.trust.verify && options.trust.ca_file.empty()) {
+    if (!is_local && options.trust.verify && options.trust.ca_file.empty()) {
         cout << "No CA certificate given, so the server cannot be verified.\n"
              << "Copy ca.crt from the server and pass --cacert <path>, or"
              << " set PCS_CACERT. Use --insecure only if you accept that"
              << " anyone on the network could impersonate the server.\n";
         return 1;
     }
-    if (!options.trust.verify) {
+    if (!is_local && !options.trust.verify) {
         cout << "Warning: --insecure, the server is not being verified." << endl;
     }
 
@@ -142,8 +152,7 @@ int main(int argc, char* argv[]) {
 
     // Only ask for a password when the command will actually log in, and
     // only when nothing else supplied one.
-    const bool needs_account =
-        command_needs_account(positional.empty() ? "" : positional[0]);
+    const bool needs_account = command_needs_account(first);
     if (needs_account && !options.credentials.user.empty() &&
         options.credentials.password.empty()) {
         if (!pcs::read_hidden_line("Password for " + options.credentials.user +
@@ -189,6 +198,17 @@ int main(int argc, char* argv[]) {
         }
         options.server = positional[1];
         return pcs::client::cmd_list(options);
+    }
+
+    if (command == "seal" || command == "open") {
+        if (positional.size() < 3) {
+            cout << "Usage: pcs-client " << command
+                 << " <file> <output>\n";
+            return 1;
+        }
+        return command == "seal"
+                   ? pcs::client::cmd_seal(options, positional[1], positional[2])
+                   : pcs::client::cmd_open(options, positional[1], positional[2]);
     }
 
     if (command == "sync") return pcs::client::cmd_sync(options);

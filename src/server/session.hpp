@@ -6,6 +6,7 @@
 #include "pcs/wire.hpp"
 #include "store.hpp"
 #include "users.hpp"
+#include "webui.hpp"
 
 namespace pcs {
 namespace server {
@@ -18,7 +19,7 @@ namespace server {
 // needs in order to hold shards for somebody. Neither implies the other.
 class Session {
 public:
-    Session(Channel& channel, Store& store, const UserStore& users,
+    Session(Channel& channel, Store& store, const UserStore& users, WebUi& web,
             std::string token, int port);
 
     void run();
@@ -38,9 +39,13 @@ private:
 
     bool fail(const std::string& reason);
 
+    // Runs the browser client when the first line turns out to be HTTP.
+    void run_http(const std::string& first_line);
+
     Channel& channel_;
     Store& store_;
     const UserStore& users_;
+    WebUi& web_;
     std::string token_;
     int port_;
 

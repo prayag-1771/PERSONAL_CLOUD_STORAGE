@@ -9,6 +9,7 @@
 #include "pcs/config.hpp"
 #include "pcs/digest.hpp"
 #include "pcs/protocol.hpp"
+#include "http.hpp"
 #include "pcs/safename.hpp"
 
 using namespace std;
@@ -81,10 +82,11 @@ void log_line(const string& text) {
 }
 
 Session::Session(Channel& channel, Store& store, const UserStore& users,
-                 string token, int port)
+                 WebUi& web, string token, int port)
     : channel_(channel),
       store_(store),
       users_(users),
+      web_(web),
       token_(move(token)),
       port_(port) {}
 
@@ -95,8 +97,34 @@ bool Session::fail(const string& reason) {
 
 void Session::run() {
     string line;
+    if (!channel_.read_line(line)) return;
+
+    // One port serves both: our own protocol opens with HELLO, a browser
+    // opens with a request line. Deciding here means there is a single
+    // address to remember and a single certificate to trust.
+    if (looks_like_http(line)) {
+        run_http(line);
+        return;
+    }
+
+    if (!handle(line)) return;
     while (channel_.read_line(line)) {
         if (!handle(line)) break;
+    }
+}
+
+void Session::run_http(const string& first_line) {
+    string line = first_line;
+    while (true) {
+        HttpRequest request;
+        string error;
+        if (!read_request(channel_, line, request, error)) return;
+        if (!web_.handle(channel_, request)) return;
+
+        // Keep-alive: the page issues several requests, and a fresh TLS
+        // handshake for each would dominate the cost of a small reply.
+        if (!channel_.read_line(line)) return;
+        if (!looks_like_http(line)) return;
     }
 }
 

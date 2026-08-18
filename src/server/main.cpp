@@ -14,6 +14,7 @@
 #include "session.hpp"
 #include "store.hpp"
 #include "users.hpp"
+#include "webui.hpp"
 
 using namespace std;
 
@@ -271,12 +272,16 @@ int main(int argc, char* argv[]) {
         cout << "[server] " << users.names().size() << " account(s) registered\n";
     }
 
+    pcs::server::WebUi web(store, users);
+
     while (true) {
         pcs::ChannelPtr channel = listener->accept();
         if (!channel) continue;  // failed handshake; keep serving others
 
-        thread([channel = move(channel), &store, &users, token, port]() mutable {
-            pcs::server::Session session(*channel, store, users, token, port);
+        thread([channel = move(channel), &store, &users, &web, token,
+                port]() mutable {
+            pcs::server::Session session(*channel, store, users, web, token,
+                                         port);
             session.run();
         }).detach();
     }

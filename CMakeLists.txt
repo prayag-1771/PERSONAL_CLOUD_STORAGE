@@ -60,7 +60,10 @@ endfunction()
 # --- server ------------------------------------------------------------------
 
 add_executable(pcs-server
+    src/server/http.cpp
     src/server/main.cpp
+    src/server/page.cpp
+    src/server/webui.cpp
     src/server/session.cpp
     src/server/store.cpp
     src/server/users.cpp
@@ -76,6 +79,7 @@ add_executable(pcs-client
     src/client/upload.cpp
     src/client/download.cpp
     src/client/list.cpp
+    src/client/local.cpp
     src/client/sync.cpp
     src/client/recover.cpp
     src/client/remote.cpp
@@ -102,9 +106,12 @@ if(PCS_BUILD_TESTS)
         tests/test_passwd.cpp
         tests/test_shardfile.cpp
         tests/test_stream.cpp
+        tests/test_http.cpp
         tests/test_tlsca.cpp
     )
-    target_include_directories(pcs-tests PRIVATE tests)
+    # The HTTP parser lives with the server but is worth testing directly.
+    target_sources(pcs-tests PRIVATE src/server/http.cpp)
+    target_include_directories(pcs-tests PRIVATE tests src/server)
     target_link_libraries(pcs-tests PRIVATE pcs_core)
     pcs_configure(pcs-tests)
 

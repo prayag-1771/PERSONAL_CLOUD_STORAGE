@@ -141,6 +141,53 @@ want "a bad machine token does not block ordinary uploads" \
 want "a traversal name is refused" \
      "$(client download ../../etc/passwd $SERVER)" "Not a valid stored name"
 
+echo "=== the web client on the same port ==="
+if command -v curl > /dev/null; then
+    CURL="curl -s --cacert $PCS_CACERT"
+
+    PAGE=$($CURL https://127.0.0.1:$MAIN/)
+    want "the page is served" "$PAGE" "Personal Cloud"
+    want "the page carries its own encryption" "$PAGE" "crypto.subtle"
+
+    WEB_TOKEN=$($CURL -X POST https://127.0.0.1:$MAIN/api/login \
+        -H "Content-Type: application/json" \
+        -d "{\"user\":\"alice\",\"password\":\"$PCS_PASSWORD\"}" \
+        | sed "s/.*token.:.//; s/\".*//")
+    [ ${#WEB_TOKEN} -eq 64 ] && ok "signing in returns a session token" \
+                             || bad "no session token returned"
+
+    want "a wrong password is refused by the api" \
+         "$($CURL -X POST https://127.0.0.1:$MAIN/api/login \
+             -H "Content-Type: application/json" \
+             -d "{\"user\":\"alice\",\"password\":\"nope\"}")" \
+         "wrong account or password"
+
+    want "the api needs a token" \
+         "$($CURL https://127.0.0.1:$MAIN/api/files)" "not signed in"
+
+    want "the api lists the account files" \
+         "$($CURL https://127.0.0.1:$MAIN/api/files \
+             -H "Authorization: Bearer $WEB_TOKEN")" "sample.bin"
+
+    head -c 4096 /dev/urandom > web.bin
+    $CURL -X PUT "https://127.0.0.1:$MAIN/api/files/web.bin?tag=deadbeef" \
+        -H "Authorization: Bearer $WEB_TOKEN" --data-binary @web.bin > /dev/null
+    $CURL "https://127.0.0.1:$MAIN/api/files/web.bin" \
+        -H "Authorization: Bearer $WEB_TOKEN" -o web-back.bin
+    same "a file put through the api comes back unchanged" web.bin web-back.bin
+
+    want "a traversal name is refused by the api" \
+         "$($CURL -X PUT "https://127.0.0.1:$MAIN/api/files/..%2f..%2fescape" \
+             -H "Authorization: Bearer $WEB_TOKEN" --data-binary x)" \
+         "cannot be stored"
+
+    # The whole point of one port: our own protocol still answers on it.
+    want "the pcs protocol still works on the same port" \
+         "$(client list $SERVER)" "web.bin"
+else
+    echo "  (skipped: curl not available)"
+fi
+
 echo "=== a server under a different authority is refused ==="
 STRANGER=$((BASE_PORT + 8))
 mkdir -p "$LAB/srv$STRANGER"        # no CA copied in, so it mints its own

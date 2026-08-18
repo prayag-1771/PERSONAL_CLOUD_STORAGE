@@ -26,6 +26,25 @@ the server stores sealed streams, so forwarding is a straight ciphertext
 relay. That is what lets `autosync` run unattended: **syncing needs no
 passphrase**.
 
+## The web client
+
+Open `https://<the-server>:9000/` in a browser and sign in. The page is served
+by the server itself, and it is a **real client, not a thin shell**: it derives
+keys and seals and opens files in the browser with WebCrypto, using the same
+container format as the command-line client. The passphrase never leaves the
+tab, and what travels over HTTP is already ciphertext.
+
+That is what makes a browser front end compatible with the rest of the design.
+A conventional web app would have had to hand the server plaintext.
+
+The page and our own protocol share one port. Our protocol opens with `HELLO`
+and a browser opens with `GET`, so the server reads the first line and decides
+which it is. One address to remember, one certificate to trust.
+
+The browser needs a secure context for WebCrypto, which is the other reason
+the CA in the previous section matters: install it and the page works, skip it
+and the browser will refuse to encrypt anything.
+
 ## Layout
 
 ```
@@ -52,6 +71,9 @@ tests/            unit tests, plus an end-to-end script
 | `manifest` | the record of a file waiting to reach the server |
 | `passwd` | account password verifiers |
 | `tlsca` | the local certificate authority |
+
+The server additionally has `http`, `webui` and `page`, which serve the
+browser client.
 | `keysource` | where the passphrase comes from |
 | `safename` | what may become a path |
 | `progress` | the progress bar |
@@ -198,6 +220,16 @@ Works whether the file is on the server or still scattered across peers.
 
 Neither asks for a passphrase.
 
+### Encrypt a file without a server
+
+```bash
+./build/pcs-client seal holiday.jpg holiday.jpg.pcs
+./build/pcs-client open holiday.jpg.pcs holiday.jpg
+```
+
+Useful for putting an encrypted copy on a USB stick, and it is what makes the
+container format testable against another implementation.
+
 ### See what is stored
 
 ```bash
@@ -269,4 +301,10 @@ It does not give you:
 - The shard layout is fixed at 2 data + 2 parity, needing exactly four peers.
 - A changed file is re-uploaded whole; there is no delta sync.
 - No versioning: uploading the same name replaces what was there.
-- No web or mobile client.
+- The browser client does not deduplicate. Computing the tag needs an
+  incremental HMAC over the whole file, which WebCrypto does not offer, so
+  uploads from the page always transfer. The command-line client still
+  deduplicates normally.
+- The browser client has no access to the peer fallback: a file uploaded from
+  a page needs the server to be up.
+- No mobile app, though the page works in a phone browser.
