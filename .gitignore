@@ -2,15 +2,19 @@
 build/
 storage/
 
-# Binaries
-client
-server
+# Binaries (anchored, so they do not also match src/client and src/server)
+/client
+/server
+/pcs-client
+/pcs-server
 *.o
+*.a
 
 # Metadata / runtime files
 *.ecmeta
 *.bin
 pending/
+*.manifest
 
 # Test / scratch files
 a.txt
