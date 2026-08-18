@@ -1,5 +1,6 @@
 #include <atomic>
 #include <csignal>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -49,10 +50,13 @@ int main(int argc, char* argv[]) {
     const int port = static_cast<int>(port_value);
 
     fs::path root = fs::current_path() / "storage" / ("server_" + port_text);
+    string forced_token;
     for (int i = 2; i < argc; i++) {
         const string arg = argv[i];
         if (arg == "--root" && i + 1 < argc) {
             root = argv[++i];
+        } else if (arg == "--token" && i + 1 < argc) {
+            forced_token = argv[++i];
         } else {
             cerr << "Unknown argument: " << arg << "\n";
             return 1;
@@ -68,8 +72,13 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    if (forced_token.empty()) {
+        if (const char* from_env = getenv("PCS_TOKEN")) forced_token = from_env;
+    }
     const string token =
-        pcs::server::load_or_create_token(root / "auth.token");
+        forced_token.empty()
+            ? pcs::server::load_or_create_token(root / "auth.token")
+            : forced_token;
 
     const fs::path cert = root / "server.crt";
     const fs::path key  = root / "server.key";
