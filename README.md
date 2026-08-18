@@ -1,172 +1,258 @@
 # Personal Cloud Storage
 
-Turn your laptop into your own Google Photos / cloud drive. A server-first encrypted storage system with peer-to-peer fallback. Files go directly to your server (your laptop) when it's online. When the server is down, files are encrypted, erasure-coded, and distributed across peer clients. As soon as the server comes back, pending files automatically sync back.
+Turn a machine you own into your own encrypted cloud drive. Files are
+encrypted on your side before they go anywhere, and the server only ever
+holds ciphertext. When the server is up, files go straight to it. When it is
+down, each file is split into four pieces and spread across peer machines;
+any two pieces are enough to put it back together. Once the server returns,
+pending files are forwarded automatically.
 
-## How It Works
-
-```
-Server Online:
-  File --> Dedup Check --> AES-256-GCM Encrypt (session key) --> TLS --> Server Decrypts --> Stored
-
-Server Offline (Fallback):
-  File --> PBKDF2 Key --> AES-256-GCM Encrypt --> Split (k=2) --> Erasure Code (m=2) --> TLS --> Distribute to 4 Peers
-
-Sync-Back (Server Returns):
-  TLS --> Fetch from Peers --> Verify SHA-256 --> Erasure Recover --> Decrypt --> Upload to Server --> Cleanup Peers
-```
-
-## Architecture
-
-### Client (`client.cpp`)
-
-- **Direct upload**: encrypts with random session key, sends to server over TLS, server decrypts and stores
-- **Deduplication**: checks SHA-256 hash with server before uploading — skips if identical content exists
-- **Fallback mode**: encrypts with PBKDF2-derived key, erasure-codes into 4 chunks, distributes to peers
-- **Sync**: recovers from peers when server comes back, uploads decrypted file, cleans up chunks
-- **Autosync**: background daemon that monitors server availability
-- **Integrity**: SHA-256 verification on every chunk fetched from peers
-- **Progress**: visual progress bar for uploads and downloads
-- **Authentication**: token-based auth for all server operations
-
-### Server (`server.cpp`)
-
-- **Multithreaded**: handles multiple concurrent clients via thread-per-connection
-- **TLS**: all connections encrypted with auto-generated self-signed certificate
-- **Authentication**: token-based access control (token auto-generated on first run)
-- **Deduplication**: CHECK_HASH command to detect duplicate uploads
-- **Input sanitization**: chunk ID and filename validation to prevent path traversal
-- Accepts direct file uploads (decrypts session-encrypted data, stores plaintext)
-- Stores/serves erasure-coded chunks for peer fallback mode
-- Supports PING health checks, LIST files, DELETE chunks
-
-### Protocol
-
-All connections use TLS. All commands except PING require authentication via `AUTH <token>\n`.
+## What it does
 
 ```
-PING\n                                          --> PONG\n
-AUTH <token>\n                                  --> (proceed or AUTH_FAILED\n)
-CHECK_HASH <filename> <sha256>\n                --> EXISTS\n or SEND\n
-UPLOAD <filename> <size> <key_hex> <iv_hex>\n   --> OK\n
-  <encrypted bytes>
-PUT <chunk_id> <size>\n
-  <raw bytes>
-FETCH <chunk_id>\n                              --> <size>\n<raw bytes>
-FETCH_FILE <filename>\n                         --> <size>\n<raw bytes>
-DELETE <chunk_id>\n                             --> OK\n
-LIST\n                                          --> <name>\n...\nEND\n
+Server up
+  file -> seal (AES-256-GCM, key from your passphrase) -> TLS -> stored sealed
+
+Server down
+  file -> seal -> split into d0,d1 + parity p0,p1 -> TLS -> four peers
+                                                          + local manifest
+
+Server back
+  manifest -> fetch any 2 shards -> rebuild the sealed stream -> TLS -> server
 ```
 
-### Erasure Coding Recovery Matrix
+The last step never decrypts anything. The shards hold a sealed stream and
+the server stores sealed streams, so forwarding is a straight ciphertext
+relay. That is what lets `autosync` run unattended: **syncing needs no
+passphrase**.
 
-Any 2 of 4 chunks are enough to recover:
+## Layout
 
-| Available Chunks | Recovery Method |
+```
+include/pcs/      public headers for the shared core
+src/core/         the core itself, one concern per unit
+src/server/       store, session, entry point
+src/client/       remote, workspace, one file per command
+tests/            unit tests, plus an end-to-end script
+```
+
+### Core (`src/core`)
+
+| Unit | Responsibility |
 |---|---|
-| d0 + d1 | Direct reassembly |
-| d0 + P0 | `d1 = d0 XOR P0` |
-| d1 + P0 | `d0 = d1 XOR P0` |
-| d0 + P1 | `d1 = GF_inv(3) * (P1 XOR 2*d0)` |
-| d1 + P1 | `d0 = GF_inv(2) * (P1 XOR 3*d1)` |
-| P0 + P1 | `d1 = P1 XOR 2*P0`, then `d0 = P0 XOR d1` |
+| `hex` | hex encoding, and rejecting malformed hex from the wire |
+| `digest` | SHA-256 and HMAC-SHA256, incremental and whole-file |
+| `cipher` | AES-256-GCM seal/open, PBKDF2 key derivation |
+| `gf256` | GF(2^8) arithmetic |
+| `erasure` | parity construction and the six recovery rules |
+| `stream` | the sealed container, one block at a time |
+| `shardfile` | splitting a stream into shards and rejoining it |
+| `wire` | TLS transport, with the platform socket API confined here |
+| `protocol` | one definition of the wire grammar, shared by both ends |
+| `manifest` | the record of a file waiting to reach the server |
+| `keysource` | where the passphrase comes from |
+| `safename` | what may become a path |
+| `progress` | the progress bar |
 
-## Security
+OpenSSL is an implementation detail: it appears in `src/core`, and nowhere
+else in the tree.
 
-- **TLS transport**: all client-server communication encrypted via TLS (self-signed cert auto-generated)
-- **Authentication**: 64-char hex token required for all operations (except health checks)
-- **AES-256-GCM**: authenticated encryption with 12-byte IV and 16-byte auth tag — detects tampering
-- **PBKDF2-HMAC-SHA256**: passphrase key derivation with 100,000 iterations and random salt (per file)
-- **Input sanitization**: path traversal protection on all filename/chunk ID inputs
-- **Integrity**: SHA-256 hash verification on every chunk fetch from peers
-- **Deduplication**: content-hash check prevents redundant uploads
-- **No plaintext passphrase storage**: passphrase asked at sync/download time, never saved to disk
+## The sealed container
 
-## Dependencies
+```
+header   magic[4] version[1] iterations[4] salt[16] block_size[4] plain_size[8]
+block    iv[12] length[4] ciphertext[length] tag[16]        (repeated)
+```
 
-- C++17 compiler (g++ or clang++)
-- OpenSSL (libssl-dev / openssl-devel)
-- CMake 3.10+
+A file is sealed one 1 MiB block at a time, so memory use is flat regardless
+of file size: a 60 MB upload peaks around 10 MB of resident memory, and a
+60 GB one would look the same.
 
-## Build
+Each block is authenticated against **the whole header plus its own block
+index**. Reordering, duplicating or dropping a block therefore fails to open
+rather than decrypting into something plausible, and since the header carries
+the plaintext length, truncation is caught too.
+
+Two keys are derived from your passphrase with PBKDF2-HMAC-SHA256 at 100,000
+iterations, separated by a label:
+
+- the **content key**, from a random per-file salt
+- the **dedup key**, from a fixed salt, so the same content always produces
+  the same tag
+
+The deduplication tag is `HMAC-SHA256(dedup key, plaintext)`. The server can
+tell that a re-upload is identical to what it already has, without learning
+the plaintext or its hash.
+
+## Erasure coding
+
+The sealed stream is halved into `d0` and `d1`, and two parity shards follow:
+
+```
+p0 = d0 XOR d1
+p1 = (2 . d0) XOR (3 . d1)          . is GF(2^8) multiplication
+```
+
+Any two of the four rebuild both halves:
+
+| Available | Recovery |
+|---|---|
+| d0, d1 | straight copy |
+| d0, p0 | `d1 = d0 XOR p0` |
+| d1, p0 | `d0 = d1 XOR p0` |
+| d0, p1 | `d1 = inv(3) . (p1 XOR 2.d0)` |
+| d1, p1 | `d0 = inv(2) . (p1 XOR 3.d1)` |
+| p0, p1 | `d1 = p1 XOR 2.p0`, then `d0 = p0 XOR d1` |
+
+Every shard is named by its own SHA-256, and a shard whose contents do not
+match its name is discarded rather than used.
+
+## Protocol
+
+One connection carries as many commands as the client wants.
+
+```
+-> HELLO pcs/2                    <- OK pcs/2
+-> PING                           <- PONG                        (no auth)
+-> AUTH <token>                   <- OK | ERR <reason>
+   -- everything below requires a successful AUTH --
+-> STAT <name>                    <- META <size> <tag> | NONE
+-> PUTFILE <name> <size> <tag>    <- OK           then <size> raw bytes
+-> GETFILE <name>                 <- DATA <size> | NONE  then raw bytes
+-> PUTCHUNK <id> <size>           <- OK           then <size> raw bytes
+-> GETCHUNK <id>                  <- DATA <size> | NONE  then raw bytes
+-> DELCHUNK <id>                  <- OK
+-> LIST                           <- COUNT <n>, then n lines "<name> <size>"
+-> QUIT                           <- BYE
+```
+
+`PING` stays outside authentication on purpose: deciding whether to fall back
+to peers should not cost a token round trip.
+
+## Building
+
+Needs a C++17 compiler, OpenSSL 1.1.1 or newer, and CMake 3.16+.
 
 ```bash
-mkdir build && cd build
-cmake ..
-cmake --build .
-
-# Or directly
-g++ -std=c++17 -o server server.cpp -lssl -lcrypto -lpthread
-g++ -std=c++17 -o client client.cpp -lssl -lcrypto
+cmake -S . -B build
+cmake --build build
 ```
 
-## Usage
+That produces `build/pcs-server`, `build/pcs-client` and `build/pcs-tests`.
 
-### Start your server
+On Windows the socket layer uses Winsock; everything above it is the same
+code. If you are on Windows without a native toolchain, WSL works well.
+
+## Using it
+
+Every machine in a peer group needs the same token, since peers hold shards
+for one another.
+
+### Run your server
 
 ```bash
-./server 9000
-# Prints auth token on first run — save it for client use
+./build/pcs-server 9000
+# prints the auth token on first run; it is kept in
+# storage/server_9000/auth.token
 ```
 
-### Upload a file (server online)
+### Store a file
 
 ```bash
-./client --token <token> upload myfile.txt 192.168.1.100:9000
-# Checks for duplicates, then sends encrypted over TLS
+export PCS_TOKEN=<token>
+./build/pcs-client upload holiday.jpg 192.168.1.10:9000
+# asks for a passphrase, encrypts locally, uploads the ciphertext
 ```
 
-### Upload a file (server offline — auto fallback)
+If the server is down, name four peers and the pieces go there instead:
 
 ```bash
-./client --token <token> upload myfile.txt 192.168.1.100:9000 peer1:9001 peer2:9002 peer3:9003 peer4:9004
-# Detects server is down, asks for passphrase, distributes to peers
+./build/pcs-client upload holiday.jpg 192.168.1.10:9000 \
+    192.168.1.11:9000 192.168.1.12:9000 192.168.1.13:9000 192.168.1.14:9000
 ```
 
-### Sync pending files when server returns
+### Get it back
 
 ```bash
-./client --token <token> sync
-# Asks for passphrase, recovers from peers, uploads to server, cleans up
+./build/pcs-client download holiday.jpg 192.168.1.10:9000
+./build/pcs-client download holiday.jpg 192.168.1.10:9000 /tmp/copy.jpg
 ```
 
-### Auto-sync daemon
+Works whether the file is on the server or still scattered across peers.
+
+### Forward what is pending
 
 ```bash
-./client --token <token> autosync 30
-# Checks every 30 seconds, notifies when server is back
+./build/pcs-client sync             # once, now
+./build/pcs-client autosync 30      # keep watching, every 30s
 ```
 
-### Download a file
+Neither asks for a passphrase.
+
+### See what is stored
 
 ```bash
-./client --token <token> download myfile.txt 192.168.1.100:9000
-# From server if online, from peers if offline
+./build/pcs-client list 192.168.1.10:9000
 ```
 
-### List files on server
+### Options
+
+| Option | Meaning |
+|---|---|
+| `--token <token>` | server token, or set `PCS_TOKEN` |
+| `--keyfile <path>` | read the passphrase from a file instead of prompting |
+| `--dir <path>` | where pending files are tracked (default: `.`) |
+| `--quiet` | no progress bars |
+
+`PCS_PASSPHRASE` works too. Prompted entry does not echo.
+
+## Testing
 
 ```bash
-./client --token <token> list 192.168.1.100:9000
+./build/pcs-tests            # 43 unit tests
+ctest --test-dir build       # the same, through CTest
+tests/e2e.sh build           # 22 checks against the running binaries
 ```
 
-## Project Structure
+The unit tests cover the algorithms; `e2e.sh` starts real servers and checks
+what only a running system shows, including peer fallback, parity-only
+recovery, passphrase-free syncing, unattended autosync, and that a 60 MB
+upload does not balloon memory.
 
-```
-.
-├── client.cpp          # Client: upload, download, sync, autosync, list
-├── server.cpp          # Server: multithreaded TLS file/chunk storage
-├── CMakeLists.txt      # Build configuration
-└── .gitignore          # Ignore build artifacts, certs, tokens, test files
-```
+## What the security model does and does not give you
 
-## Known Limitations
+It does give you:
 
-- Entire file loaded into memory (no streaming for very large files)
-- No user accounts, quotas, or access control (single-user / personal use)
-- No automatic peer discovery or NAT traversal
-- Autosync detects server but requires manual `sync` for passphrase entry
-- Self-signed TLS cert (not CA-signed — fine for personal/LAN use)
-- No web UI or mobile client yet
+- **Content the server cannot read.** Encryption happens before anything
+  leaves your machine; the server never receives a key or a passphrase.
+- **Tamper detection.** Every block is authenticated, so altered data fails
+  to open instead of decrypting into garbage.
+- **Transport encryption**, on top of that, via TLS 1.2 or newer.
+- **Access control**, by way of a 32-byte token compared in constant time. A
+  wrong token drops the connection, so an attacker gets one guess per
+  handshake.
+- **Input that cannot escape its directory.** Names and chunk ids arriving
+  from the network are validated before they become paths, and declared
+  sizes are bounds-checked before anything is allocated.
 
+It does not give you:
 
-Limitations -
+- **A verified server identity.** The certificate is self-signed and the
+  client does not pin it, so someone positioned on your network could
+  impersonate the server. They would still see only ciphertext, but they
+  could serve you the wrong file or collect your token. Fine on a LAN you
+  control; think twice before exposing the port to the open internet.
+- **Protection from a weak passphrase.** PBKDF2 at 100,000 iterations slows
+  guessing down, it does not stop it.
+- **Recovery if you forget the passphrase.** There is no escrow and no reset.
+  The data is gone.
+- **Hidden metadata.** File names and sizes are visible to the server.
+
+## Limitations
+
+- No user accounts or quotas; this is a single-user system.
+- No peer discovery or NAT traversal, so peers are addresses you supply.
+- The shard layout is fixed at 2 data + 2 parity, needing exactly four peers.
+- A changed file is re-uploaded whole; there is no delta sync.
+- No versioning: uploading the same name replaces what was there.
+- No web or mobile client.
