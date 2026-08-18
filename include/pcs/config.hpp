@@ -10,7 +10,7 @@ namespace pcs {
 namespace config {
 
 // Wire protocol identifier exchanged in the HELLO handshake.
-inline constexpr char kProtocol[] = "pcs/2";
+inline constexpr char kProtocol[] = "pcs/3";
 
 // --- Encrypted stream container -------------------------------------------
 inline constexpr uint8_t  kStreamVersion = 1;
@@ -26,6 +26,11 @@ inline constexpr size_t kKeyLen  = 32;
 inline constexpr size_t kSaltLen = 16;
 
 inline constexpr uint32_t kKdfIterations = 100000;
+
+// Account passwords are verified on the server, where an attacker who steals
+// the file can guess offline, so this is deliberately far heavier than the
+// per-file KDF above. It is paid once per login, not per block.
+inline constexpr uint32_t kPasswordIterations = 600000;
 
 // Fixed context strings so the two derived keys never collide.
 inline constexpr char kContentKeyLabel[] = "pcs-content-v1";

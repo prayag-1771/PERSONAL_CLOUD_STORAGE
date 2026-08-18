@@ -50,6 +50,7 @@ tests/            unit tests, plus an end-to-end script
 | `wire` | TLS transport, with the platform socket API confined here |
 | `protocol` | one definition of the wire grammar, shared by both ends |
 | `manifest` | the record of a file waiting to reach the server |
+| `passwd` | account password verifiers |
 | `keysource` | where the passphrase comes from |
 | `safename` | what may become a path |
 | `progress` | the progress bar |
@@ -119,6 +120,7 @@ One connection carries as many commands as the client wants.
 -> STAT <name>                    <- META <size> <tag> | NONE
 -> PUTFILE <name> <size> <tag>    <- OK           then <size> raw bytes
 -> GETFILE <name>                 <- DATA <size> | NONE  then raw bytes
+   -- chunk commands: require AUTH --
 -> PUTCHUNK <id> <size>           <- OK           then <size> raw bytes
 -> GETCHUNK <id>                  <- DATA <size> | NONE  then raw bytes
 -> DELCHUNK <id>                  <- OK

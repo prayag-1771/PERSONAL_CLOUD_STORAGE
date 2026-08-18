@@ -9,9 +9,18 @@
 namespace pcs {
 namespace client {
 
+// Who the client is. The two halves are independent: the account identifies
+// a person and scopes their files, while the machine token is what peers in
+// the group present to each other in order to exchange shards.
+struct Credentials {
+    std::string user;
+    std::string password;
+    std::string token;
+};
+
 // Everything a command needs that came from the command line.
 struct Options {
-    std::string token;
+    Credentials credentials;
     std::string server;
     std::vector<std::string> peers;
     KeyOptions key;

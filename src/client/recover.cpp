@@ -34,7 +34,7 @@ bool rebuild_stream(const Options& opt, const Manifest& manifest,
         const char* label = shard_name(static_cast<Shard>(ref.index));
         string peer_error;
 
-        unique_ptr<Remote> peer = Remote::connect(ref.peer, opt.token, peer_error);
+        unique_ptr<Remote> peer = Remote::connect(ref.peer, opt.credentials, Access::Chunks, peer_error);
         if (!peer) {
             if (verbose)
                 cout << "  " << label << " from " << ref.peer
@@ -80,7 +80,7 @@ void release_shards(const Options& opt, const Manifest& manifest,
                     bool verbose) {
     for (const ShardRef& ref : manifest.shards) {
         string error;
-        unique_ptr<Remote> peer = Remote::connect(ref.peer, opt.token, error);
+        unique_ptr<Remote> peer = Remote::connect(ref.peer, opt.credentials, Access::Chunks, error);
         if (!peer) {
             if (verbose)
                 cout << "  could not reach " << ref.peer

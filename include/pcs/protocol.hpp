@@ -7,13 +7,22 @@
 // Wire vocabulary. Both ends build and parse their lines through this header
 // so a change to the grammar cannot drift between client and server.
 //
-//   -> HELLO pcs/2                  <- OK pcs/2
+//   -> HELLO pcs/3                  <- OK pcs/3
 //   -> PING                         <- PONG                    (pre-auth)
+//   -> LOGIN <user> <password>      <- OK | ERR <reason>
 //   -> AUTH <token>                 <- OK | ERR <reason>
-//   -- everything below requires a successful AUTH --
+//
+// Two separate things are being established, because they answer different
+// questions. LOGIN says who you are, and scopes every file command below to
+// that account. AUTH presents the shared machine token, and only unlocks the
+// chunk commands, which is all a peer needs to hold shards on someone's
+// behalf. A connection may present either, or both.
+//
+//   -- file commands: require LOGIN --
 //   -> STAT <name>                  <- META <size> <tag> | NONE
 //   -> PUTFILE <name> <size> <tag>  <- OK            (then <size> raw bytes)
 //   -> GETFILE <name>               <- DATA <size> | NONE   (then raw bytes)
+//   -- chunk commands: require AUTH --
 //   -> PUTCHUNK <id> <size>         <- OK            (then <size> raw bytes)
 //   -> GETCHUNK <id>                <- DATA <size> | NONE   (then raw bytes)
 //   -> DELCHUNK <id>                <- OK
@@ -28,6 +37,7 @@ namespace proto {
 inline constexpr char kHello[]    = "HELLO";
 inline constexpr char kPing[]     = "PING";
 inline constexpr char kAuth[]     = "AUTH";
+inline constexpr char kLogin[]    = "LOGIN";
 inline constexpr char kStat[]     = "STAT";
 inline constexpr char kPutFile[]  = "PUTFILE";
 inline constexpr char kGetFile[]  = "GETFILE";

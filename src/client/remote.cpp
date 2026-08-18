@@ -18,8 +18,8 @@ Remote::Remote(ChannelPtr channel) : channel_(move(channel)) {}
 Remote::~Remote() = default;
 
 unique_ptr<Remote> Remote::connect(const string& address,
-                                        const string& token,
-                                        string& error) {
+                                        const Credentials& credentials,
+                                        Access access, string& error) {
     ChannelPtr channel = dial(address, error);
     if (!channel) return nullptr;
 
@@ -44,14 +44,40 @@ unique_ptr<Remote> Remote::connect(const string& address,
         return nullptr;
     }
 
-    if (!remote->channel_->send_line(string(proto::kAuth) + " " + token) ||
-        !remote->channel_->read_line(reply)) {
-        error = "authentication request failed";
-        return nullptr;
-    }
-    if (proto::split(reply).empty() || proto::split(reply)[0] != proto::kOk) {
-        error = "server rejected the token";
-        return nullptr;
+    if (access == Access::Files) {
+        if (credentials.user.empty()) {
+            error = "no account given: pass --user (and --password, or let it "
+                    "prompt)";
+            return nullptr;
+        }
+        if (!remote->channel_->send_line(string(proto::kLogin) + " " +
+                                        credentials.user + " " +
+                                        credentials.password) ||
+            !remote->channel_->read_line(reply)) {
+            error = "login request failed";
+            return nullptr;
+        }
+        const vector<string> f = proto::split(reply);
+        if (f.empty() || f[0] != proto::kOk) {
+            error = "the server rejected that account or password";
+            return nullptr;
+        }
+    } else {
+        if (credentials.token.empty()) {
+            error = "no machine token given: pass --token or set PCS_TOKEN";
+            return nullptr;
+        }
+        if (!remote->channel_->send_line(string(proto::kAuth) + " " +
+                                        credentials.token) ||
+            !remote->channel_->read_line(reply)) {
+            error = "token request failed";
+            return nullptr;
+        }
+        const vector<string> f = proto::split(reply);
+        if (f.empty() || f[0] != proto::kOk) {
+            error = "the peer rejected the machine token";
+            return nullptr;
+        }
     }
 
     return remote;

@@ -24,6 +24,7 @@ add_library(pcs_core STATIC
     src/core/hex.cpp
     src/core/keysource.cpp
     src/core/manifest.cpp
+    src/core/passwd.cpp
     src/core/progress.cpp
     src/core/protocol.cpp
     src/core/safename.cpp
@@ -61,6 +62,7 @@ add_executable(pcs-server
     src/server/main.cpp
     src/server/session.cpp
     src/server/store.cpp
+    src/server/users.cpp
 )
 target_include_directories(pcs-server PRIVATE src/server)
 target_link_libraries(pcs-server PRIVATE pcs_core)
@@ -96,6 +98,7 @@ if(PCS_BUILD_TESTS)
         tests/test_erasure.cpp
         tests/test_gf256.cpp
         tests/test_manifest.cpp
+        tests/test_passwd.cpp
         tests/test_shardfile.cpp
         tests/test_stream.cpp
     )

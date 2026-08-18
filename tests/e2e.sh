@@ -25,6 +25,9 @@ BASE_PORT="${PCS_E2E_PORT:-9400}"
 TOKEN="1111111111111111111111111111111111111111111111111111111111111111"
 export PCS_TOKEN="$TOKEN"
 export PCS_PASSPHRASE="an end to end passphrase"
+export PCS_USER="alice"
+export PCS_PASSWORD="alice-password"
+BOB_PASSWORD="bob-password"
 
 pass=0
 fail=0
@@ -58,9 +61,27 @@ SERVER="127.0.0.1:$MAIN"
 mkdir -p "$LAB/work"
 cd "$LAB/work" || exit 1
 
-echo "=== server online: upload, list, download ==="
+echo "=== accounts ==="
 MAIN_PID=$(start_server $MAIN)
 sleep 1
+
+# useradd prompts twice; feeding it on stdin keeps the test unattended.
+printf "%s\n%s\n" "$PCS_PASSWORD" "$PCS_PASSWORD" | \
+    "$BUILD/pcs-server" $MAIN --root "$LAB/srv$MAIN" useradd alice > /dev/null 2>&1
+printf "%s\n%s\n" "$BOB_PASSWORD" "$BOB_PASSWORD" | \
+    "$BUILD/pcs-server" $MAIN --root "$LAB/srv$MAIN" useradd bob > /dev/null 2>&1
+
+ACCOUNTS=$("$BUILD/pcs-server" $MAIN --root "$LAB/srv$MAIN" userlist 2>&1)
+want "both accounts exist" "$ACCOUNTS" "alice"
+want "second account exists" "$ACCOUNTS" "bob"
+
+if grep -q "$PCS_PASSWORD" "$LAB/srv$MAIN/users.txt" 2>/dev/null; then
+    bad "the password was stored in the account file"
+else
+    ok "no password stored, only a verifier"
+fi
+
+echo "=== server online: upload, list, download ==="
 
 head -c 3000000 /dev/urandom > original.bin
 cp original.bin sample.bin
@@ -86,12 +107,34 @@ want "wrong passphrase is refused" \
 [ -f sample.bin ] && bad "a partial file was left behind" \
                   || ok "no partial file left behind"
 
+want "wrong password is refused" \
+     "$(PCS_PASSWORD=nonsense client list $SERVER)" \
+     "rejected that account or password"
+want "unknown account is refused" \
+     "$(PCS_USER=nobody PCS_PASSWORD=nonsense client list $SERVER)" \
+     "rejected that account or password"
+
+# Chunk traffic is gated by the machine token rather than by an account, so
+# a bad token has to be refused on that path specifically. The server is up
+# here, so the upload succeeds without ever touching a peer.
 BAD_TOKEN="2222222222222222222222222222222222222222222222222222222222222222"
-want "wrong token is refused" \
-     "$("$BUILD/pcs-client" --token "$BAD_TOKEN" --quiet list $SERVER 2>&1)" \
-     "rejected the token"
+want "a bad machine token does not block ordinary uploads" \
+     "$("$BUILD/pcs-client" --token "$BAD_TOKEN" --user alice \
+        --password "$PCS_PASSWORD" --quiet upload original.bin $SERVER 2>&1)" \
+     "Stored"
 want "a traversal name is refused" \
      "$(client download ../../etc/passwd $SERVER)" "Not a valid stored name"
+
+echo "=== accounts are isolated from each other ==="
+BOB_LIST=$(PCS_USER=bob PCS_PASSWORD="$BOB_PASSWORD" client list $SERVER)
+if echo "$BOB_LIST" | grep -q "sample.bin"; then
+    bad "bob can see alice's files"
+else
+    ok "bob cannot see alice's files"
+fi
+
+BOB_GET=$(PCS_USER=bob PCS_PASSWORD="$BOB_PASSWORD" client download sample.bin $SERVER)
+want "bob cannot fetch alice's file" "$BOB_GET" "does not have"
 
 echo "=== deduplication ==="
 cp original.bin sample.bin

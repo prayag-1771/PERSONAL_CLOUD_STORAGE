@@ -49,7 +49,7 @@ bool sync_one(const Options& opt, const Workspace& workspace,
         return false;
 
     unique_ptr<Remote> remote =
-        Remote::connect(manifest.server, opt.token, error);
+        Remote::connect(manifest.server, opt.credentials, Access::Files, error);
     if (!remote) return false;
 
     uint64_t existing_size = 0;

@@ -6,6 +6,7 @@
 
 #include "commands.hpp"
 #include "pcs/config.hpp"
+#include "pcs/keysource.hpp"
 #include "pcs/protocol.hpp"
 #include "pcs/wire.hpp"
 
@@ -33,7 +34,11 @@ void print_usage() {
         << "        Keep watching and forward pending files automatically.\n"
         << "\n"
         << "Options:\n"
-        << "  --token <token>   server token (or set PCS_TOKEN)\n"
+        << "  --user <name>     your account on the server (or set PCS_USER)\n"
+        << "  --password <pw>   account password (or set PCS_PASSWORD; if"
+        << "                    neither is given, it is prompted for)\n"
+        << "  --token <token>   shared machine token, needed only to reach"
+        << "                    peers (or set PCS_TOKEN)\n"
         << "  --keyfile <path>  read the passphrase from a file instead of\n"
         << "                    prompting (or set PCS_PASSPHRASE)\n"
         << "  --dir <path>      where pending files are tracked (default: .)\n"
@@ -59,7 +64,11 @@ bool parse_arguments(int argc, char* argv[], pcs::client::Options& options,
         if (arg == "--quiet") {
             options.quiet = true;
         } else if (arg == "--token" && i + 1 < argc) {
-            options.token = argv[++i];
+            options.credentials.token = argv[++i];
+        } else if (arg == "--user" && i + 1 < argc) {
+            options.credentials.user = argv[++i];
+        } else if (arg == "--password" && i + 1 < argc) {
+            options.credentials.password = argv[++i];
         } else if (arg == "--keyfile" && i + 1 < argc) {
             options.key.keyfile = argv[++i];
         } else if (arg == "--dir" && i + 1 < argc) {
@@ -72,6 +81,13 @@ bool parse_arguments(int argc, char* argv[], pcs::client::Options& options,
         }
     }
     return true;
+}
+
+// sync and autosync reach the server to deliver files, so they log in too;
+// only the shard traffic underneath them runs on the machine token.
+bool command_needs_account(const string& command) {
+    return command == "upload" || command == "download" || command == "list" ||
+           command == "sync" || command == "autosync";
 }
 
 }  // namespace
@@ -89,8 +105,31 @@ int main(int argc, char* argv[]) {
         return positional.empty() && !wants_help ? 1 : 0;
     }
 
-    if (options.token.empty()) {
-        if (const char* from_env = getenv("PCS_TOKEN")) options.token = from_env;
+    if (options.credentials.token.empty()) {
+        if (const char* from_env = getenv("PCS_TOKEN"))
+            options.credentials.token = from_env;
+    }
+    if (options.credentials.user.empty()) {
+        if (const char* from_env = getenv("PCS_USER"))
+            options.credentials.user = from_env;
+    }
+    if (options.credentials.password.empty()) {
+        if (const char* from_env = getenv("PCS_PASSWORD"))
+            options.credentials.password = from_env;
+    }
+
+    // Only ask for a password when the command will actually log in, and
+    // only when nothing else supplied one.
+    const bool needs_account =
+        command_needs_account(positional.empty() ? "" : positional[0]);
+    if (needs_account && !options.credentials.user.empty() &&
+        options.credentials.password.empty()) {
+        if (!pcs::read_hidden_line("Password for " + options.credentials.user +
+                                       ": ",
+                                   options.credentials.password)) {
+            cout << "No password entered." << endl;
+            return 1;
+        }
     }
 
     pcs::net_startup();

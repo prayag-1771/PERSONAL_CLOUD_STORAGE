@@ -9,20 +9,30 @@
 
 #include "pcs/stream.hpp"
 #include "pcs/wire.hpp"
+#include "workspace.hpp"
 
 namespace pcs {
 namespace client {
 
 // One authenticated connection to a server or peer. Every request the client
 // can make lives here, so the command layer never touches the wire grammar.
+// What a connection is going to be used for, which decides what it has to
+// prove. Asking for the narrower one keeps a peer connection from needing an
+// account password it has no business knowing.
+enum class Access {
+    Files,   // establishes an account with LOGIN
+    Chunks,  // presents the shared machine token with AUTH
+};
+
 class Remote {
 public:
     ~Remote();
 
-    // Connects, performs the version handshake and authenticates.
+    // Connects, performs the version handshake, and proves whatever the
+    // requested access requires.
     static std::unique_ptr<Remote> connect(const std::string& address,
-                                           const std::string& token,
-                                           std::string& error);
+                                           const Credentials& credentials,
+                                           Access access, std::string& error);
 
     // Liveness probe. Deliberately needs no token, so deciding whether to
     // fall back to peers is a single cheap round trip.

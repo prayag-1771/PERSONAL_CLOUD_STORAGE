@@ -30,7 +30,7 @@ ProgressFn make_progress(ProgressBar& bar) {
 int upload_to_server(const Options& opt, const string& name,
                      const fs::path& stream_path, const string& dedup_tag) {
     string error;
-    unique_ptr<Remote> remote = Remote::connect(opt.server, opt.token, error);
+    unique_ptr<Remote> remote = Remote::connect(opt.server, opt.credentials, Access::Files, error);
     if (!remote) {
         cout << "Cannot reach the server: " << error << "\n";
         return 1;
@@ -106,7 +106,7 @@ int distribute_to_peers(const Options& opt, const Workspace& workspace,
         }
 
         unique_ptr<Remote> peer =
-            Remote::connect(opt.peers[i], opt.token, error);
+            Remote::connect(opt.peers[i], opt.credentials, Access::Chunks, error);
         if (!peer) {
             cout << "  " << shard_name(static_cast<Shard>(i)) << " -> "
                  << opt.peers[i] << " unavailable (" << error << ")\n";

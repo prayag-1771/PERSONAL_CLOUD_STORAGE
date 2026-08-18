@@ -93,7 +93,7 @@ int cmd_download(const Options& opt, const string& name,
         return recover_from_peers(opt, workspace, name, destination);
     }
 
-    unique_ptr<Remote> remote = Remote::connect(opt.server, opt.token, error);
+    unique_ptr<Remote> remote = Remote::connect(opt.server, opt.credentials, Access::Files, error);
     if (!remote) {
         cout << "Cannot reach the server: " << error << "\n";
         return 1;

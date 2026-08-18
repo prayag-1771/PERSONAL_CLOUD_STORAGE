@@ -80,8 +80,13 @@ void log_line(const string& text) {
     cout << text << endl;
 }
 
-Session::Session(Channel& channel, Store& store, string token, int port)
-    : channel_(channel), store_(store), token_(move(token)), port_(port) {}
+Session::Session(Channel& channel, Store& store, const UserStore& users,
+                 string token, int port)
+    : channel_(channel),
+      store_(store),
+      users_(users),
+      token_(move(token)),
+      port_(port) {}
 
 bool Session::fail(const string& reason) {
     channel_.send_line(string(proto::kErr) + " " + reason);
@@ -116,9 +121,21 @@ bool Session::handle(const string& line) {
         channel_.send_line(proto::kBye);
         return false;
     }
-    if (cmd == proto::kAuth) return do_auth(f);
+    if (cmd == proto::kLogin) return do_login(f);
+    if (cmd == proto::kAuth)  return do_auth(f);
 
-    if (!authenticated_) return fail("unauthenticated");
+    // File commands act on one account, so they need an identity.
+    const bool is_file_command =
+        cmd == proto::kStat || cmd == proto::kPutFile ||
+        cmd == proto::kGetFile || cmd == proto::kList;
+    if (is_file_command && !logged_in_) return fail("login-required");
+
+    // Chunk commands only move opaque ciphertext between machines, so the
+    // shared machine token is the right level of proof for them.
+    const bool is_chunk_command =
+        cmd == proto::kPutChunk || cmd == proto::kGetChunk ||
+        cmd == proto::kDelChunk;
+    if (is_chunk_command && !machine_trusted_) return fail("token-required");
 
     if (cmd == proto::kStat)     return do_stat(f);
     if (cmd == proto::kPutFile)  return do_put_file(f);
@@ -129,6 +146,26 @@ bool Session::handle(const string& line) {
     if (cmd == proto::kList)     return do_list();
 
     return fail("unknown-command");
+}
+
+bool Session::do_login(const vector<string>& f) {
+    if (f.size() != 3) return fail("malformed-login");
+
+    const string& name = f[1];
+    if (!users_.verify(name, f[2])) {
+        log_line("[server " + to_string(port_) + "] login rejected for " + name);
+        channel_.send_line(string(proto::kErr) + " bad-credentials");
+        return false;  // one attempt per connection
+    }
+
+    string error;
+    if (!store_.ensure_account(name, error)) return fail("account-storage");
+
+    user_ = name;
+    logged_in_ = true;
+    channel_.send_line(proto::kOk);
+    log_line("[server " + to_string(port_) + "] " + name + " logged in");
+    return true;
 }
 
 bool Session::do_auth(const vector<string>& f) {
@@ -142,7 +179,7 @@ bool Session::do_auth(const vector<string>& f) {
         return false;  // one guess per connection
     }
 
-    authenticated_ = true;
+    machine_trusted_ = true;
     channel_.send_line(proto::kOk);
     return true;
 }
@@ -154,7 +191,7 @@ bool Session::do_stat(const vector<string>& f) {
     string tag;
     lock_guard<mutex> guard(store_.mutex());
 
-    if (!store_.file_info(f[1], size, tag)) {
+    if (!store_.file_info(user_, f[1], size, tag)) {
         channel_.send_line(proto::kNone);
         return true;
     }
@@ -171,10 +208,10 @@ bool Session::do_put_file(const vector<string>& f) {
     if (!proto::parse_size(f[2], config::kMaxTransferSize, size))
         return fail("bad-size");
 
-    const fs::path final_path = store_.file_path(name);
+    const fs::path final_path = store_.file_path(user_, name);
     if (final_path.empty()) return fail("bad-name");
 
-    const fs::path temp = store_.temp_path(name);
+    const fs::path temp = store_.temp_path();
     string error;
     if (!receive_to_file(channel_, temp, size, error)) {
         error_code ignored;
@@ -192,12 +229,12 @@ bool Session::do_put_file(const vector<string>& f) {
             fs::remove(temp, ec);
             return fail("store-failed");
         }
-        store_.write_tag(name, f[3]);
+        store_.write_tag(user_, name, f[3]);
     }
 
     channel_.send_line(proto::kOk);
-    log_line("[server " + to_string(port_) + "] stored " + name + " (" +
-             to_string(size) + " bytes, encrypted)");
+    log_line("[server " + to_string(port_) + "] " + user_ + " stored " + name +
+             " (" + to_string(size) + " bytes, encrypted)");
     return true;
 }
 
@@ -208,9 +245,9 @@ bool Session::do_get_file(const vector<string>& f) {
     uint64_t size = 0;
     {
         lock_guard<mutex> guard(store_.mutex());
-        path = store_.file_path(f[1]);
+        path = store_.file_path(user_, f[1]);
         string tag;
-        if (path.empty() || !store_.file_info(f[1], size, tag)) {
+        if (path.empty() || !store_.file_info(user_, f[1], size, tag)) {
             channel_.send_line(proto::kNone);
             return true;
         }
@@ -219,8 +256,8 @@ bool Session::do_get_file(const vector<string>& f) {
     channel_.send_line(string(proto::kData) + " " + to_string(size));
     if (!send_from_file(channel_, path, size)) return false;
 
-    log_line("[server " + to_string(port_) + "] served " + f[1] + " (" +
-             to_string(size) + " bytes)");
+    log_line("[server " + to_string(port_) + "] served " + user_ + "/" + f[1] +
+             " (" + to_string(size) + " bytes)");
     return true;
 }
 
@@ -234,7 +271,7 @@ bool Session::do_put_chunk(const vector<string>& f) {
     if (!proto::parse_size(f[2], config::kMaxTransferSize, size))
         return fail("bad-size");
 
-    const fs::path temp = store_.temp_path(f[1]);
+    const fs::path temp = store_.temp_path();
     string error;
     if (!receive_to_file(channel_, temp, size, error)) {
         error_code ignored;
@@ -304,7 +341,7 @@ bool Session::do_list() {
     vector<pair<string, uint64_t>> files;
     {
         lock_guard<mutex> guard(store_.mutex());
-        files = store_.list_files();
+        files = store_.list_files(user_);
     }
 
     channel_.send_line(string(proto::kCount) + " " +
