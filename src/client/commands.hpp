@@ -14,6 +14,7 @@ int cmd_upload(const Options& options, const std::string& file);
 int cmd_download(const Options& options, const std::string& name,
                  const std::filesystem::path& destination);
 int cmd_list(const Options& options);
+int cmd_delete(const Options& options, const std::string& name);
 int cmd_sync(const Options& options);
 int cmd_autosync(const Options& options, int interval_seconds);
 

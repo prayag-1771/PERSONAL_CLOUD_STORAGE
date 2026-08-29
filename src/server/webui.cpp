@@ -105,6 +105,8 @@ bool WebUi::handle(Channel& channel, const HttpRequest& request) {
         if (request.method == "GET") return serve_get_file(channel, user, name);
         if (request.method == "PUT")
             return serve_put_file(channel, request, user, name);
+        if (request.method == "DELETE")
+            return serve_delete_file(channel, user, name);
     }
 
     drain_body(channel, request.content_length);
@@ -213,6 +215,23 @@ bool WebUi::serve_get_file(Channel& channel, const string& user,
         left -= want;
     }
     return true;
+}
+
+bool WebUi::serve_delete_file(Channel& channel, const string& user,
+                              const string& name) {
+    bool removed = false;
+    {
+        lock_guard<mutex> guard(store_.mutex());
+        removed = store_.remove_file(user, name);
+    }
+
+    if (!removed) {
+        return send_response(channel, 404, "application/json",
+                             json_error("no such file"));
+    }
+
+    log_line("[web] " + user + " deleted " + name);
+    return send_response(channel, 200, "application/json", R"({"ok":true})");
 }
 
 bool WebUi::serve_put_file(Channel& channel, const HttpRequest& request,

@@ -32,6 +32,7 @@ private:
     bool do_stat(const std::vector<std::string>& fields);
     bool do_put_file(const std::vector<std::string>& fields);
     bool do_get_file(const std::vector<std::string>& fields);
+    bool do_del_file(const std::vector<std::string>& fields);
     bool do_put_chunk(const std::vector<std::string>& fields);
     bool do_get_chunk(const std::vector<std::string>& fields);
     bool do_del_chunk(const std::vector<std::string>& fields);

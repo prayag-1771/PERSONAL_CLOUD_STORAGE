@@ -42,6 +42,10 @@ public:
     bool write_tag(const std::string& user, const std::string& name,
                    const std::string& tag) const;
 
+    // Removes a stored file and its sidecar. False when it was not there,
+    // which the caller reports rather than treating as an error.
+    bool remove_file(const std::string& user, const std::string& name) const;
+
     std::vector<std::pair<std::string, uint64_t>> list_files(
         const std::string& user) const;
 

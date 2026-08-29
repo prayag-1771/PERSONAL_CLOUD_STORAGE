@@ -380,7 +380,14 @@ async function refresh() {
     get.className = "quiet";
     get.textContent = "Download";
     get.onclick = () => download(file.name, get);
-    act.appendChild(get);
+
+    const drop = document.createElement("button");
+    drop.className = "quiet";
+    drop.textContent = "Delete";
+    drop.style.marginLeft = "6px";
+    drop.onclick = () => remove(file.name);
+
+    act.append(get, drop);
 
     tr.append(name, size, act);
     rows.appendChild(tr);
@@ -413,6 +420,24 @@ async function upload(files) {
     } finally {
       hideProgress();
     }
+  }
+  await refresh();
+}
+
+async function remove(name) {
+  // Deleting is irreversible and there are no versions to fall back on, so
+  // it asks first.
+  if (!confirm("Delete " + name + "? This cannot be undone.")) return;
+
+  const reply = await api("/api/files/" + encodeURIComponent(name), {
+    method: "DELETE",
+  });
+  if (reply.ok) {
+    $("files-msg").textContent = "Deleted " + name + ".";
+    $("files-msg").className = "note";
+  } else {
+    $("files-msg").textContent = "Could not delete " + name + ".";
+    $("files-msg").className = "note bad";
   }
   await refresh();
 }

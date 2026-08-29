@@ -55,6 +55,8 @@ private:
                         const std::string& name);
     bool serve_put_file(Channel& channel, const HttpRequest& request,
                         const std::string& user, const std::string& name);
+    bool serve_delete_file(Channel& channel, const std::string& user,
+                           const std::string& name);
 
     bool authenticate(const HttpRequest& request, std::string& user);
 

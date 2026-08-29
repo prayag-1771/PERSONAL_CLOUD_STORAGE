@@ -155,7 +155,8 @@ bool Session::handle(const string& line) {
     // File commands act on one account, so they need an identity.
     const bool is_file_command =
         cmd == proto::kStat || cmd == proto::kPutFile ||
-        cmd == proto::kGetFile || cmd == proto::kList;
+        cmd == proto::kGetFile || cmd == proto::kDelFile ||
+        cmd == proto::kList;
     if (is_file_command && !logged_in_) return fail("login-required");
 
     // Chunk commands only move opaque ciphertext between machines, so the
@@ -168,6 +169,7 @@ bool Session::handle(const string& line) {
     if (cmd == proto::kStat)     return do_stat(f);
     if (cmd == proto::kPutFile)  return do_put_file(f);
     if (cmd == proto::kGetFile)  return do_get_file(f);
+    if (cmd == proto::kDelFile)  return do_del_file(f);
     if (cmd == proto::kPutChunk) return do_put_chunk(f);
     if (cmd == proto::kGetChunk) return do_get_chunk(f);
     if (cmd == proto::kDelChunk) return do_del_chunk(f);
@@ -286,6 +288,25 @@ bool Session::do_get_file(const vector<string>& f) {
 
     log_line("[server " + to_string(port_) + "] served " + user_ + "/" + f[1] +
              " (" + to_string(size) + " bytes)");
+    return true;
+}
+
+bool Session::do_del_file(const vector<string>& f) {
+    if (f.size() != 2) return fail("malformed-delfile");
+
+    bool removed = false;
+    {
+        lock_guard<mutex> guard(store_.mutex());
+        removed = store_.remove_file(user_, f[1]);
+    }
+
+    if (!removed) {
+        channel_.send_line(proto::kNone);
+        return true;
+    }
+
+    channel_.send_line(proto::kOk);
+    log_line("[server " + to_string(port_) + "] " + user_ + " deleted " + f[1]);
     return true;
 }
 

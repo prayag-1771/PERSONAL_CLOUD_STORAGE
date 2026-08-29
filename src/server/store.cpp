@@ -104,6 +104,19 @@ bool Store::write_tag(const string& user, const string& name,
     return static_cast<bool>(out);
 }
 
+bool Store::remove_file(const string& user, const string& name) const {
+    const fs::path path = file_path(user, name);
+    if (path.empty()) return false;
+
+    error_code ec;
+    const bool existed = fs::remove(path, ec) && !ec;
+
+    // The sidecar goes with it; leaving it behind would make a later upload
+    // of the same name look already deduplicated.
+    fs::remove(account_dir(user) / "meta" / (name + ".tag"), ec);
+    return existed;
+}
+
 vector<pair<string, uint64_t>> Store::list_files(const string& user) const {
     vector<pair<string, uint64_t>> out;
     const fs::path base = account_dir(user);

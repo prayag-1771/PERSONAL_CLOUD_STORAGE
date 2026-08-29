@@ -30,6 +30,8 @@ void print_usage() {
         << "        Encrypt a file locally, without a server.\n"
         << "  open <file> <output>\n"
         << "        Decrypt a file that was sealed locally.\n"
+        << "  delete <name> <server>\n"
+        << "        Remove a stored file. This cannot be undone.\n"
         << "  list <server>\n"
         << "        Show what the server is holding.\n"
         << "  sync\n"
@@ -98,7 +100,7 @@ bool parse_arguments(int argc, char* argv[], pcs::client::Options& options,
 // only the shard traffic underneath them runs on the machine token.
 bool command_needs_account(const string& command) {
     return command == "upload" || command == "download" || command == "list" ||
-           command == "sync" || command == "autosync";
+           command == "delete" || command == "sync" || command == "autosync";
 }
 
 }  // namespace
@@ -189,6 +191,15 @@ int main(int argc, char* argv[]) {
             positional.size() > 3 ? fs::path(positional[3])
                                   : fs::path(positional[1]);
         return pcs::client::cmd_download(options, positional[1], destination);
+    }
+
+    if (command == "delete") {
+        if (positional.size() < 3) {
+            cout << "Usage: pcs-client delete <name> <server>\n";
+            return 1;
+        }
+        options.server = positional[2];
+        return pcs::client::cmd_delete(options, positional[1]);
     }
 
     if (command == "list") {

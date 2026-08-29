@@ -22,6 +22,7 @@
 //   -> STAT <name>                  <- META <size> <tag> | NONE
 //   -> PUTFILE <name> <size> <tag>  <- OK            (then <size> raw bytes)
 //   -> GETFILE <name>               <- DATA <size> | NONE   (then raw bytes)
+//   -> DELFILE <name>               <- OK | NONE
 //   -- chunk commands: require AUTH --
 //   -> PUTCHUNK <id> <size>         <- OK            (then <size> raw bytes)
 //   -> GETCHUNK <id>                <- DATA <size> | NONE   (then raw bytes)
@@ -41,6 +42,7 @@ inline constexpr char kLogin[]    = "LOGIN";
 inline constexpr char kStat[]     = "STAT";
 inline constexpr char kPutFile[]  = "PUTFILE";
 inline constexpr char kGetFile[]  = "GETFILE";
+inline constexpr char kDelFile[]  = "DELFILE";
 inline constexpr char kPutChunk[] = "PUTCHUNK";
 inline constexpr char kGetChunk[] = "GETCHUNK";
 inline constexpr char kDelChunk[] = "DELCHUNK";

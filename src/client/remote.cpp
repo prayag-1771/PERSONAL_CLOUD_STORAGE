@@ -253,6 +253,30 @@ bool Remote::get_file(const string& name, const fs::path& destination,
     return true;
 }
 
+bool Remote::del_file(const string& name, bool& found, string& error) {
+    found = false;
+    if (!channel_->send_line(string(proto::kDelFile) + " " + name)) {
+        error = "request failed";
+        return false;
+    }
+
+    string reply;
+    if (!channel_->read_line(reply)) {
+        error = "no reply to DELFILE";
+        return false;
+    }
+
+    const vector<string> f = proto::split(reply);
+    if (!f.empty() && f[0] == proto::kNone) return true;
+    if (f.empty() || f[0] != proto::kOk) {
+        error = "server refused the delete: " + reply;
+        return false;
+    }
+
+    found = true;
+    return true;
+}
+
 bool Remote::put_chunk(const string& id, const fs::path& source,
                        string& error) {
     error_code ec;

@@ -52,6 +52,9 @@ public:
                   const std::filesystem::path& destination, bool& found,
                   const ProgressFn& progress, std::string& error);
 
+    // `found` distinguishes "there was nothing to delete" from a failure.
+    bool del_file(const std::string& name, bool& found, std::string& error);
+
     bool put_chunk(const std::string& id, const std::filesystem::path& source,
                    std::string& error);
 

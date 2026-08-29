@@ -3,6 +3,7 @@
 #include <memory>
 
 #include "commands.hpp"
+#include "pcs/safename.hpp"
 #include "pcs/progress.hpp"
 #include "remote.hpp"
 
@@ -41,6 +42,35 @@ int cmd_list(const Options& opt) {
              << "  " << human_size(entry.second) << " sealed\n";
     }
     cout << files.size() << " file(s).\n";
+    return 0;
+}
+
+int cmd_delete(const Options& opt, const string& name) {
+    if (!is_safe_name(name)) {
+        cout << "Not a valid stored name: " << name << "\n";
+        return 1;
+    }
+
+    string error;
+    unique_ptr<Remote> remote = Remote::connect(opt.server, opt, Access::Files, error);
+    if (!remote) {
+        cout << "Cannot reach the server: " << error << "\n";
+        return 1;
+    }
+
+    bool found = false;
+    if (!remote->del_file(name, found, error)) {
+        cout << "Delete failed: " << error << "\n";
+        return 1;
+    }
+    remote->quit();
+
+    if (!found) {
+        cout << "There is no '" << name << "' to delete.\n";
+        return 1;
+    }
+
+    cout << "Deleted '" << name << "'.\n";
     return 0;
 }
 

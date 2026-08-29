@@ -213,6 +213,34 @@ fi
 BOB_GET=$(PCS_USER=bob PCS_PASSWORD="$BOB_PASSWORD" client download sample.bin $SERVER)
 want "bob cannot fetch alice's file" "$BOB_GET" "does not have"
 
+echo "=== deleting a file ==="
+cp original.bin gone.bin
+client upload gone.bin $SERVER > /dev/null
+want "the file is there first" "$(client list $SERVER)" "gone.bin"
+
+want "delete reports success" "$(client delete gone.bin $SERVER)" "Deleted"
+LIST_AFTER=$(client list $SERVER)
+if echo "$LIST_AFTER" | grep -q "gone.bin"; then
+    bad "the file is still listed after deleting"
+else
+    ok "the file is gone from the listing"
+fi
+
+want "deleting it again says so" \
+     "$(client delete gone.bin $SERVER)" "no .gone.bin. to delete"
+
+# Deleting must take the dedup sidecar with it, or re-uploading the same
+# content would be skipped and the file would never come back.
+cp original.bin gone.bin
+want "the same file can be uploaded again after deleting" \
+     "$(client upload gone.bin $SERVER)" "Stored"
+client delete gone.bin $SERVER > /dev/null
+
+want "bob cannot delete alice's file" \
+     "$(PCS_USER=bob PCS_PASSWORD="$BOB_PASSWORD" client delete sample.bin $SERVER)" \
+     "no .sample.bin. to delete"
+want "and alice still has it" "$(client list $SERVER)" "sample.bin"
+
 echo "=== deduplication ==="
 cp original.bin sample.bin
 want "an identical re-upload is skipped" \
