@@ -8,6 +8,7 @@
 #include "pcs/config.hpp"
 #include "pcs/keysource.hpp"
 #include "pcs/protocol.hpp"
+#include "pcs/settings.hpp"
 #include "pcs/wire.hpp"
 
 using namespace std;
@@ -21,21 +22,23 @@ void print_usage() {
         << "Usage: pcs-client [options] <command> [arguments]\n"
         << "\n"
         << "Commands:\n"
-        << "  upload <file> <server> [peer1 peer2 peer3 peer4]\n"
+        << "  upload <file> [server] [peer1 peer2 peer3 peer4]\n"
         << "        Encrypt and store a file. Goes straight to the server\n"
         << "        when it is up; otherwise the four peers hold the pieces.\n"
-        << "  download <name> <server> [output-path]\n"
+        << "  download <name> [server]   (use --out for the path)\n"
         << "        Fetch and decrypt a file, from the server or from peers.\n"
         << "  seal <file> <output>\n"
         << "        Encrypt a file locally, without a server.\n"
         << "  open <file> <output>\n"
         << "        Decrypt a file that was sealed locally.\n"
-        << "  delete <name> <server>\n"
+        << "  delete <name> [server]\n"
         << "        Remove a stored file. This cannot be undone.\n"
-        << "  list <server>\n"
+        << "  list [server]\n"
         << "        Show what the server is holding.\n"
         << "  sync\n"
         << "        Forward pending files now that the server is reachable.\n"
+        << "  config\n"
+        << "        Show which settings file is in use and what it sets.\n"
         << "  autosync [seconds]\n"
         << "        Keep watching and forward pending files automatically.\n"
         << "\n"
@@ -50,9 +53,16 @@ void print_usage() {
         << "  --cacert <path>   CA certificate to verify the server against"
         << "                    (or set PCS_CACERT)\n"
         << "  --insecure        skip verification; only for bootstrapping\n"
+        << "  --out <path>      where a download is written\n"
+        << "  --config <path>   settings file (default: ./pcs.conf, then\n"
+        << "                    ~/.config/pcs/pcs.conf)\n"
+        << "  --profile <name>  section of the settings file to use\n"
         << "  --dir <path>      where pending files are tracked (default: .)\n"
         << "  --quiet           no progress bars\n"
         << "  -h, --help        this message\n"
+        << "\n"
+        << "Anything not given here is taken from the settings file, so a\n"
+        << "server and peers usually need naming only once.\n"
         << "\n"
         << "Files are encrypted before they leave this machine. The server\n"
         << "never receives the passphrase or the key, and stores ciphertext\n"
@@ -62,7 +72,9 @@ void print_usage() {
 // Pulls the known flags out of argv and leaves the positional arguments in
 // order, so options may appear before or after the command.
 bool parse_arguments(int argc, char* argv[], pcs::client::Options& options,
-                     vector<string>& positional, bool& wants_help) {
+                     vector<string>& positional, bool& wants_help,
+                     string& output_path, string& config_path,
+                     string& profile) {
     for (int i = 1; i < argc; i++) {
         const string arg = argv[i];
 
@@ -82,6 +94,12 @@ bool parse_arguments(int argc, char* argv[], pcs::client::Options& options,
             options.key.keyfile = argv[++i];
         } else if (arg == "--dir" && i + 1 < argc) {
             options.work_dir = argv[++i];
+        } else if (arg == "--out" && i + 1 < argc) {
+            output_path = argv[++i];
+        } else if (arg == "--config" && i + 1 < argc) {
+            config_path = argv[++i];
+        } else if (arg == "--profile" && i + 1 < argc) {
+            profile = argv[++i];
         } else if (arg == "--cacert" && i + 1 < argc) {
             options.trust.ca_file = argv[++i];
         } else if (arg == "--insecure") {
@@ -98,6 +116,15 @@ bool parse_arguments(int argc, char* argv[], pcs::client::Options& options,
 
 // sync and autosync reach the server to deliver files, so they log in too;
 // only the shard traffic underneath them runs on the machine token.
+// Reports the missing setting once, in the same words everywhere.
+bool require_server(const string& server) {
+    if (!server.empty()) return true;
+    cout << "No server given. Name one on the command line, or put\n"
+         << "  server = host:port\n"
+         << "in a pcs.conf settings file. See: pcs-client config\n";
+    return false;
+}
+
 bool command_needs_account(const string& command) {
     return command == "upload" || command == "download" || command == "list" ||
            command == "delete" || command == "sync" || command == "autosync";
@@ -111,7 +138,10 @@ int main(int argc, char* argv[]) {
 
     vector<string> positional;
     bool wants_help = false;
-    if (!parse_arguments(argc, argv, options, positional, wants_help)) return 1;
+    string output_path, config_path, profile;
+    if (!parse_arguments(argc, argv, options, positional, wants_help,
+                         output_path, config_path, profile))
+        return 1;
 
     if (wants_help || positional.empty()) {
         print_usage();
@@ -127,6 +157,68 @@ int main(int argc, char* argv[]) {
     if (options.trust.ca_file.empty()) {
         if (const char* from_env = getenv("PCS_CACERT"))
             options.trust.ca_file = from_env;
+    }
+
+    pcs::Settings settings;
+    {
+        string settings_error;
+        if (!pcs::Settings::load(config_path, profile, settings,
+                                 settings_error)) {
+            cout << settings_error << "\n";
+            return 1;
+        }
+    }
+
+    // The file fills gaps only; anything already set from the command line
+    // or the environment stays as it is.
+    auto fill = [](string& target, const string& value) {
+        if (target.empty() && !value.empty()) target = value;
+    };
+    fill(options.credentials.user, settings.get("user"));
+    fill(options.credentials.password, settings.get("password"));
+    fill(options.credentials.token, settings.get("token"));
+    fill(options.trust.ca_file, settings.get("cacert"));
+    fill(options.key.keyfile, settings.get("keyfile"));
+
+    const string settings_server = settings.get("server");
+    const vector<string> settings_peers = settings.get_list("peers");
+
+    if (const string dir = settings.get("dir"); !dir.empty() &&
+        options.work_dir == fs::current_path()) {
+        options.work_dir = dir;
+    }
+
+    if (first == "config") {
+        if (!settings.loaded()) {
+            cout << "No settings file found. Looked in:\n";
+            for (const fs::path& candidate : pcs::Settings::search_paths())
+                cout << "  " << candidate.string() << "\n";
+            return 0;
+        }
+        cout << "Settings file: " << settings.path().string() << "\n"
+             << "Profile:       " << settings.profile() << "\n"
+             << "server         " << (settings_server.empty() ? "(unset)"
+                                                              : settings_server)
+             << "\n"
+             << "user           " << (options.credentials.user.empty()
+                                          ? "(unset)"
+                                          : options.credentials.user)
+             << "\n"
+             << "cacert         " << (options.trust.ca_file.empty()
+                                          ? "(unset)"
+                                          : options.trust.ca_file)
+             << "\n"
+             << "peers          " << settings_peers.size() << " configured\n"
+             << "token          " << (options.credentials.token.empty()
+                                          ? "(unset)" : "(set)")
+             << "\n"
+             << "password       " << (options.credentials.password.empty()
+                                          ? "(unset)" : "(set)")
+             << "\n"
+             << "watch          " << (settings.get("watch").empty()
+                                          ? "(unset)" : settings.get("watch"))
+             << "\n";
+        return 0;
     }
     if (!is_local && options.trust.verify && options.trust.ca_file.empty()) {
         cout << "No CA certificate given, so the server cannot be verified.\n"
@@ -168,48 +260,56 @@ int main(int argc, char* argv[]) {
     pcs::net_startup();
 
     const string command = positional[0];
-
     if (command == "upload") {
-        if (positional.size() < 3) {
-            cout << "Usage: pcs-client upload <file> <server> "
+        if (positional.size() < 2) {
+            cout << "Usage: pcs-client upload <file> [server] "
                     "[peer1 peer2 peer3 peer4]\n";
             return 1;
         }
-        options.server = positional[2];
-        options.peers.assign(positional.begin() + 3, positional.end());
+        options.server =
+            positional.size() > 2 ? positional[2] : settings_server;
+        if (positional.size() > 3)
+            options.peers.assign(positional.begin() + 3, positional.end());
+        else
+            options.peers = settings_peers;
+        if (!require_server(options.server)) return 1;
         return pcs::client::cmd_upload(options, positional[1]);
     }
 
     if (command == "download") {
-        if (positional.size() < 3) {
-            cout << "Usage: pcs-client download <name> <server> "
-                    "[output-path]\n";
+        if (positional.size() < 2) {
+            cout << "Usage: pcs-client download <name> [server] "
+                    "[--out <path>]\n";
             return 1;
         }
-        options.server = positional[2];
-        const fs::path destination =
-            positional.size() > 3 ? fs::path(positional[3])
-                                  : fs::path(positional[1]);
+        options.server =
+            positional.size() > 2 ? positional[2] : settings_server;
+        if (!require_server(options.server)) return 1;
+
+        const fs::path destination = output_path.empty()
+                                         ? fs::path(positional[1])
+                                         : fs::path(output_path);
         return pcs::client::cmd_download(options, positional[1], destination);
     }
 
     if (command == "delete") {
-        if (positional.size() < 3) {
-            cout << "Usage: pcs-client delete <name> <server>\n";
+        if (positional.size() < 2) {
+            cout << "Usage: pcs-client delete <name> [server]\n";
             return 1;
         }
-        options.server = positional[2];
+        options.server =
+            positional.size() > 2 ? positional[2] : settings_server;
+        if (!require_server(options.server)) return 1;
         return pcs::client::cmd_delete(options, positional[1]);
     }
 
     if (command == "list") {
-        if (positional.size() < 2) {
-            cout << "Usage: pcs-client list <server>\n";
-            return 1;
-        }
-        options.server = positional[1];
+        options.server =
+            positional.size() > 1 ? positional[1] : settings_server;
+        if (!require_server(options.server)) return 1;
         return pcs::client::cmd_list(options);
     }
+
 
     if (command == "seal" || command == "open") {
         if (positional.size() < 3) {

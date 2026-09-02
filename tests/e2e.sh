@@ -213,6 +213,53 @@ fi
 BOB_GET=$(PCS_USER=bob PCS_PASSWORD="$BOB_PASSWORD" client download sample.bin $SERVER)
 want "bob cannot fetch alice's file" "$BOB_GET" "does not have"
 
+echo "=== the settings file ==="
+cat > "$LAB/work/pcs.conf" <<CONF
+[default]
+server = 127.0.0.1:$MAIN
+user   = alice
+token  = $TOKEN
+cacert = $PCS_CACERT
+peers  = 127.0.0.1:$P1, 127.0.0.1:$P2, 127.0.0.1:$P3, 127.0.0.1:$P4
+
+[nowhere]
+server = 127.0.0.1:1
+CONF
+
+# With settings in place, nothing but the password needs supplying, and none
+# of the server, token, CA or peer addresses appear on the command line.
+BARE="$BUILD/pcs-client --quiet"
+want "config reports the file it found" \
+     "$(env -u PCS_TOKEN -u PCS_CACERT -u PCS_USER $BARE config 2>&1)" \
+     "pcs.conf"
+
+cp original.bin configured.bin
+want "upload works with no server argument" \
+     "$(env -u PCS_TOKEN -u PCS_CACERT -u PCS_USER $BARE upload configured.bin 2>&1)" \
+     "Stored"
+want "list works with no server argument" \
+     "$(env -u PCS_TOKEN -u PCS_CACERT -u PCS_USER $BARE list 2>&1)" \
+     "configured.bin"
+
+rm -f configured.bin
+want "download honours --out" \
+     "$(env -u PCS_TOKEN -u PCS_CACERT -u PCS_USER $BARE download configured.bin \
+        --out elsewhere.bin 2>&1)" "Wrote"
+same "the downloaded copy matches" elsewhere.bin original.bin
+
+# A profile selects a section rather than merging it over the default, so
+# the other section must not inherit the user or CA set in [default].
+PROFILE_OUT=$(env -u PCS_TOKEN -u PCS_CACERT -u PCS_USER $BARE \
+              --profile nowhere config 2>&1)
+want "a profile selects another section" "$PROFILE_OUT" "127.0.0.1:1"
+want "and inherits nothing from the default section" "$PROFILE_OUT" "user *(unset)"
+
+want "an explicitly named missing file is an error" \
+     "$($BARE --config /nonexistent/pcs.conf list 2>&1)" "no such settings file"
+
+env -u PCS_TOKEN -u PCS_CACERT -u PCS_USER $BARE delete configured.bin > /dev/null 2>&1
+mv "$LAB/work/pcs.conf" "$LAB/pcs.conf.saved"
+
 echo "=== deleting a file ==="
 cp original.bin gone.bin
 client upload gone.bin $SERVER > /dev/null

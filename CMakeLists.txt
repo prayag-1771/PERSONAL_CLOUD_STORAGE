@@ -28,6 +28,7 @@ add_library(pcs_core STATIC
     src/core/progress.cpp
     src/core/protocol.cpp
     src/core/safename.cpp
+    src/core/settings.cpp
     src/core/shardfile.cpp
     src/core/stream.cpp
     src/core/tlsca.cpp
@@ -105,6 +106,7 @@ if(PCS_BUILD_TESTS)
         tests/test_manifest.cpp
         tests/test_passwd.cpp
         tests/test_shardfile.cpp
+        tests/test_settings.cpp
         tests/test_stream.cpp
         tests/test_http.cpp
         tests/test_tlsca.cpp
