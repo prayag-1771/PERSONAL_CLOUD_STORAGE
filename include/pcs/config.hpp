@@ -12,6 +12,10 @@ namespace config {
 // Wire protocol identifier exchanged in the HELLO handshake.
 inline constexpr char kProtocol[] = "pcs/4";
 
+// Reported by --version on both binaries, so a bug report can say which
+// build it came from.
+inline constexpr char kVersion[] = "1.0.0";
+
 // --- Encrypted stream container -------------------------------------------
 inline constexpr uint8_t  kStreamVersion = 1;
 inline constexpr char     kStreamMagic[4] = {'P', 'C', 'S', '1'};

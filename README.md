@@ -37,7 +37,10 @@ tab, and what travels over HTTP is already ciphertext.
 It does the things a file view should: drag and drop or pick files, an upload
 queue showing progress per file, download and delete, filtering and sorting by
 name, size or date, and a layout that works on a phone. It follows the system
-light or dark setting.
+light or dark setting. Re-uploading something the server already holds is
+recognised and skipped, and a session that has expired returns you to the
+sign-in card saying so, rather than failing to list anything for no visible
+reason.
 
 Signing in asks for two secrets, because they do different jobs: the account
 password proves who you are to the server, and the passphrase encrypts the
@@ -222,11 +225,15 @@ inherits nothing from `[default]`, so profiles cannot leak into each other.
 
 `pcs-client config` shows which file was found and what it sets.
 
-Keep the file readable only by you, since it can hold a token and a password:
+Keep the file readable only by you, since it holds a token and possibly a
+password:
 
 ```bash
 chmod 600 ~/.config/pcs/pcs.conf
 ```
+
+`pcs.conf` is in `.gitignore` for the same reason: one committed by accident
+would publish both.
 
 ### Store a file
 
@@ -315,6 +322,7 @@ There are no versions and no undo.
 | `--daemon` | detach (`watch` and `autosync`) |
 | `--log <path>`, `--pidfile <path>` | where a detached run writes output and its pid |
 | `--dir <path>` | where pending files are tracked (default: `.`) |
+| `--version` | print the version and exit |
 | `--quiet` | no progress bars |
 
 `PCS_PASSPHRASE` works too. Prompted entry does not echo.
@@ -373,10 +381,12 @@ It does not give you:
 - The shard layout is fixed at 2 data + 2 parity, needing exactly four peers.
 - A changed file is re-uploaded whole; there is no delta sync.
 - No versioning: uploading the same name replaces what was there.
-- The browser client does not deduplicate. Computing the tag needs an
-  incremental HMAC over the whole file, which WebCrypto does not offer, so
-  uploads from the page always transfer. The command-line client still
-  deduplicates normally.
+- The browser client deduplicates only files under 64 MB. The tag is an HMAC
+  over the whole plaintext and WebCrypto has no incremental HMAC, so the
+  one-shot is used while the file still fits in memory; anything larger
+  uploads without a tag. Hand-rolling a streaming SHA-256 would lift the
+  limit, but a subtly wrong hash could make two different files agree and
+  silently skip the upload, which is the one failure worth avoiding here.
 - The browser client has no access to the peer fallback: a file uploaded from
   a page needs the server to be up.
 - No mobile app, though the page works in a phone browser.

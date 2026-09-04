@@ -10,6 +10,11 @@ storage/
 *.o
 *.a
 
+# Settings files: these hold a machine token and possibly an account
+# password, so they must never be committed
+pcs.conf
+*.pcs.conf
+
 # Metadata / runtime files
 *.ecmeta
 *.bin

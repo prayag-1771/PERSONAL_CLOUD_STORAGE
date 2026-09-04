@@ -252,6 +252,16 @@ const HEADER_LEN = 37;
 const MAGIC = [80, 67, 83, 49];   // PCS1
 const VERSION = 1;
 const CONTENT_LABEL = "pcs-content-v1";
+const DEDUP_LABEL = "pcs-dedup-v1";
+
+// The deduplication tag is an HMAC over the whole plaintext, and WebCrypto
+// offers no incremental HMAC. Hand-rolling SHA-256 here would allow it to be
+// streamed, but a subtly wrong hash could make two different files agree,
+// and the upload would then be skipped and the wrong content left stored
+// under that name. Rather than risk that on code no browser has run yet,
+// the vetted one-shot is used for files small enough to hold in memory, and
+// anything larger simply uploads without a tag.
+const DEDUP_LIMIT = 64 * 1024 * 1024;
 
 const text = new TextEncoder();
 const $ = (id) => document.getElementById(id);
@@ -304,6 +314,29 @@ async function contentKey(pass, salt, iterations) {
     pass, concat([text.encode(CONTENT_LABEL), salt]), iterations);
   return crypto.subtle.importKey(
     "raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
+}
+
+function toHex(bytes) {
+  let out = "";
+  for (const b of bytes) out += b.toString(16).padStart(2, "0");
+  return out;
+}
+
+// Matches derive_dedup_key: a fixed salt, so the same content and passphrase
+// always produce the same tag, which is the whole point of it.
+async function dedupKey(pass) {
+  const salt = text.encode(DEDUP_LABEL + DEDUP_LABEL);
+  const raw = await deriveBits(pass, salt, ITERATIONS);
+  return crypto.subtle.importKey(
+    "raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+}
+
+async function dedupTagFor(file) {
+  if (file.size > DEDUP_LIMIT) return "";
+  const key = await dedupKey(passphrase);
+  const signature = await crypto.subtle.sign(
+    "HMAC", key, await file.arrayBuffer());
+  return toHex(new Uint8Array(signature));
 }
 
 function buildHeader(salt, plainSize) {
@@ -449,7 +482,27 @@ async function api(path, options) {
   const settings = options || {};
   settings.headers = settings.headers || {};
   if (session) settings.headers["Authorization"] = "Bearer " + session.token;
-  return fetch(path, settings);
+
+  const reply = await fetch(path, settings);
+
+  // Sessions expire on their own. Without this the page would just report
+  // that it could not list anything, with no hint that signing in again is
+  // what is needed.
+  if (reply.status === 401 && session) signedOut();
+  return reply;
+}
+
+function signedOut() {
+  session = null;
+  passphrase = "";
+  files = [];
+
+  $("signin").classList.remove("hide");
+  $("uploader").classList.add("hide");
+  $("files").classList.add("hide");
+  $("session").classList.add("hide");
+  say("signin-msg", "That session expired. Please sign in again.", "bad");
+  $("user").focus();
 }
 
 // --- the upload queue -----------------------------------------------------
@@ -488,12 +541,27 @@ async function upload(chosen) {
   for (const file of chosen) {
     const job = addJob(file.name);
     try {
+      job.status("checking");
+      const tag = await dedupTagFor(file);
+
+      // Nothing to do when the server already holds this exact content
+      // under this name.
+      const existing = files.find((f) => f.name === file.name);
+      if (tag && existing && existing.tag === tag) {
+        job.progress(1, 1);
+        job.status("already stored", "done");
+        job.retire(2500);
+        continue;
+      }
+
       job.status("encrypting");
       const sealed = await sealFile(file, job.progress);
 
       job.status("uploading");
       job.progress(0, 1);
-      const reply = await api("/api/files/" + encodeURIComponent(file.name), {
+      const query = tag ? "?tag=" + encodeURIComponent(tag) : "";
+      const reply = await api(
+        "/api/files/" + encodeURIComponent(file.name) + query, {
         method: "PUT",
         headers: { "Content-Type": "application/octet-stream" },
         body: sealed,
@@ -597,9 +665,11 @@ async function download(name, button) {
     if (!reply.ok) throw new Error("could not fetch it");
 
     const sealed = await reply.blob();
-    say("files-msg", "Decrypting " + name + "...");
 
-    const plain = await openBlob(sealed, null);
+    const plain = await openBlob(sealed, (done, total) => {
+      const percent = total ? Math.floor(done * 100 / total) : 100;
+      say("files-msg", "Decrypting " + name + "... " + percent + "%");
+    });
 
     const url = URL.createObjectURL(plain);
     const link = document.createElement("a");

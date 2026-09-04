@@ -310,6 +310,41 @@ cp original.bin sample.bin
 want "an identical re-upload is skipped" \
      "$(client upload sample.bin $SERVER)" "already holds identical"
 
+echo "=== the deduplication tag the browser computes ==="
+# The page derives this tag itself, and it has to agree with the C++ one or
+# an identical re-upload from the browser would never be recognised. The
+# formula below mirrors the JavaScript in page.cpp, and is checked against
+# the tag the server actually stored for a file the C++ client uploaded.
+if command -v python3 > /dev/null; then
+    STORED_TAG=$(cat "$LAB/srv$MAIN/users/alice/meta/sample.bin.tag" 2>/dev/null)
+    EXPECTED_TAG=$(python3 - "$PCS_PASSPHRASE" original.bin <<PY
+import hashlib, hmac, sys
+passphrase, path = sys.argv[1], sys.argv[2]
+key = hashlib.pbkdf2_hmac("sha256", passphrase.encode(),
+                          b"pcs-dedup-v1pcs-dedup-v1", 100000, 32)
+print(hmac.new(key, open(path, "rb").read(), hashlib.sha256).hexdigest())
+PY
+)
+    if [ -n "$STORED_TAG" ] && [ "$STORED_TAG" = "$EXPECTED_TAG" ]; then
+        ok "the browser tag formula matches what the server stored"
+    else
+        bad "tag mismatch: stored $STORED_TAG, formula gave $EXPECTED_TAG"
+    fi
+
+    # And the tag has to reach the page, or it has nothing to compare.
+    if command -v curl > /dev/null; then
+        WT=$(curl -s --cacert "$PCS_CACERT" -X POST https://127.0.0.1:$MAIN/api/login \
+             -H "Content-Type: application/json" \
+             -d "{\"user\":\"alice\",\"password\":\"$PCS_PASSWORD\"}" \
+             | sed "s/.*token.:.//; s/\".*//")
+        want "the listing api exposes the tag" \
+             "$(curl -s --cacert "$PCS_CACERT" https://127.0.0.1:$MAIN/api/files \
+                 -H "Authorization: Bearer $WT")" "$STORED_TAG"
+    fi
+else
+    echo "  (skipped: python3 not available)"
+fi
+
 echo "=== server offline: scatter to peers ==="
 for port in $P1 $P2 $P3 $P4; do start_server $port > /dev/null; done
 sleep 1

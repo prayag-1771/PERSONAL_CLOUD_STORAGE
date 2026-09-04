@@ -70,6 +70,7 @@ void print_usage() {
         << "  --log <path>      where a detached run writes its output\n"
         << "  --pidfile <path>  where to record the process id\n"
         << "  -h, --help        this message\n"
+        << "  --version         print the version and exit\n"
         << "\n"
         << "Anything not given here is taken from the settings file, so a\n"
         << "server and peers usually need naming only once.\n"
@@ -83,11 +84,16 @@ void print_usage() {
 // order, so options may appear before or after the command.
 bool parse_arguments(int argc, char* argv[], pcs::client::Options& options,
                      vector<string>& positional, bool& wants_help,
+                     bool& wants_version,
                      string& output_path, string& config_path, string& profile,
                      bool& detach, string& log_path, string& pid_path) {
     for (int i = 1; i < argc; i++) {
         const string arg = argv[i];
 
+        if (arg == "--version") {
+            wants_version = true;
+            return true;
+        }
         if (arg == "-h" || arg == "--help") {
             wants_help = true;
             return true;
@@ -177,12 +183,19 @@ int main(int argc, char* argv[]) {
 
     vector<string> positional;
     bool wants_help = false;
+    bool wants_version = false;
     string output_path, config_path, profile, log_path, pid_path;
     bool detach = false;
     if (!parse_arguments(argc, argv, options, positional, wants_help,
-                         output_path, config_path, profile, detach, log_path,
-                         pid_path))
+                         wants_version, output_path, config_path, profile,
+                         detach, log_path, pid_path))
         return 1;
+
+    if (wants_version) {
+        cout << "pcs-client " << pcs::config::kVersion << " (protocol "
+             << pcs::config::kProtocol << ")\n";
+        return 0;
+    }
 
     if (wants_help || positional.empty()) {
         print_usage();

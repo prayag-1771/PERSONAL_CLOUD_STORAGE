@@ -177,7 +177,8 @@ bool WebUi::serve_list(Channel& channel, const string& user) {
         if (i) body += ",";
         body += R"({"name":")" + json_escape(files[i].name) +
                 R"(","size":)" + to_string(files[i].size) +
-                R"(,"modified":)" + to_string(files[i].modified) + "}";
+                R"(,"modified":)" + to_string(files[i].modified) +
+                R"(,"tag":")" + json_escape(files[i].tag) + R"("})";
     }
     body += "]}";
 

@@ -135,6 +135,11 @@ vector<Store::StoredFile> Store::list_files(const string& user) const {
         file.name = name;
         file.size = static_cast<uint64_t>(entry.file_size(ec));
 
+        // The tag is keyed by the owner's passphrase, so it tells the server
+        // nothing; it lets the client recognise its own content.
+        ifstream tag_in(base / "meta" / (name + ".tag"));
+        if (tag_in) getline(tag_in, file.tag);
+
         // Converted to plain seconds so the wire format does not depend on
         // whatever clock the local filesystem happens to use.
         const fs::file_time_type when = entry.last_write_time(ec);

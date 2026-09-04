@@ -50,6 +50,7 @@ public:
         std::string name;
         uint64_t size = 0;
         int64_t modified = 0;   // seconds since the epoch
+        std::string tag;        // deduplication tag, empty when unknown
     };
 
     std::vector<StoredFile> list_files(const std::string& user) const;

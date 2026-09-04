@@ -145,6 +145,11 @@ int main(int argc, char* argv[]) {
         print_usage();
         return 0;
     }
+    if (port_text == "--version") {
+        cout << "pcs-server " << pcs::config::kVersion << " (protocol "
+             << pcs::config::kProtocol << ")\n";
+        return 0;
+    }
 
     uint64_t port_value = 0;
     if (!pcs::proto::parse_size(port_text, 65535, port_value) || port_value == 0) {
