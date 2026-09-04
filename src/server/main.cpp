@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "pcs/config.hpp"
+#include "pcs/daemon.hpp"
 #include "pcs/keysource.hpp"
 #include "pcs/protocol.hpp"
 #include "pcs/tlsca.hpp"
@@ -34,6 +35,9 @@ void print_usage() {
         << "  userlist          show the accounts on this server\n"
         << "  passwd <name>     change an account password\n"
         << "\n"
+        << "Service commands:\n"
+        << "  service-file      print a systemd unit for running at boot\n"
+        << "\n"
         << "Certificate commands:\n"
         << "  ca-export <path>  copy the CA certificate somewhere, ready to\n"
         << "                    install on a phone or laptop\n"
@@ -44,6 +48,10 @@ void print_usage() {
         << "  --token <token>   shared machine token, or set PCS_TOKEN\n"
         << "  --host <name>     an extra name or address this server is\n"
         << "                    reached by; repeatable\n"
+        << "  --daemon          detach and keep running after the terminal\n"
+        << "                    closes\n"
+        << "  --log <path>      where a detached server writes its output\n"
+        << "  --pidfile <path>  where to record the process id\n"
         << "\n"
         << "Each account has its own storage and its own passphrase, so one\n"
         << "person cannot read another's files. Peers that hold shards for\n"
@@ -148,6 +156,9 @@ int main(int argc, char* argv[]) {
     fs::path root = fs::current_path() / "storage" / ("server_" + port_text);
     string forced_token;
     vector<string> extra_hosts;
+    string log_path;
+    string pid_path;
+    bool detach = false;
     string command;
     vector<string> command_args;
 
@@ -159,6 +170,12 @@ int main(int argc, char* argv[]) {
             forced_token = argv[++i];
         } else if (arg == "--host" && i + 1 < argc) {
             extra_hosts.push_back(argv[++i]);
+        } else if (arg == "--daemon") {
+            detach = true;
+        } else if (arg == "--log" && i + 1 < argc) {
+            log_path = argv[++i];
+        } else if (arg == "--pidfile" && i + 1 < argc) {
+            pid_path = argv[++i];
         } else if (arg.rfind("--", 0) == 0) {
             cerr << "Unknown option: " << arg << "\n";
             return 1;
@@ -182,6 +199,21 @@ int main(int argc, char* argv[]) {
     if (!users.load(error)) {
         cerr << "Cannot read the account list: " << error << "\n";
         return 1;
+    }
+
+    if (command == "service-file") {
+        error_code ec;
+        const fs::path binary = fs::absolute(argv[0], ec);
+        string exec_line = binary.string() + " " + port_text + " --root " +
+                           fs::absolute(root, ec).string();
+        cout << pcs::systemd_unit("Personal cloud storage server", exec_line,
+                                  fs::absolute(root, ec).string());
+        cerr << "\n"
+             << "Save that as ~/.config/systemd/user/pcs-server.service, then:\n"
+             << "  systemctl --user daemon-reload\n"
+             << "  systemctl --user enable --now pcs-server\n"
+             << "  loginctl enable-linger $USER   # so it runs without a login\n";
+        return 0;
     }
 
     if (command == "ca-export") {
@@ -256,6 +288,24 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    if (detach) {
+        // Detaching here, before the banner: everything that can fail has
+        // already run and was reported to this terminal, and the banner
+        // itself belongs in the log rather than on a terminal that is about
+        // to be given up.
+        if (log_path.empty()) log_path = (root / "server.log").string();
+
+        // Said before the handover, so whoever typed the command learns
+        // where the output went.
+        cout << "[server] detaching; output goes to " << log_path << endl;
+
+        string detach_error;
+        if (!pcs::daemonize(log_path, pid_path, detach_error)) {
+            cerr << detach_error << "\n";
+            return 1;
+        }
+    }
+
     cout << "[server] protocol " << pcs::config::kProtocol << " on port "
          << port << " (TLS)\n"
          << "[server] data root: " << root.string() << "\n"
@@ -271,6 +321,7 @@ int main(int argc, char* argv[]) {
     } else {
         cout << "[server] " << users.names().size() << " account(s) registered\n";
     }
+
 
     pcs::server::WebUi web(store, users);
 

@@ -375,6 +375,81 @@ else
     bad "the CA changed, which would break every installed copy"
 fi
 
+echo "=== the watched folder ==="
+mkdir -p "$LAB/watched"
+head -c 20000 /dev/urandom > "$LAB/watched/first.bin"
+
+"$BUILD/pcs-client" --token "$TOKEN" --quiet --server $SERVER \
+    watch "$LAB/watched" 2 > "$LAB/watch.log" 2>&1 &
+WATCHER=$!
+sleep 1
+
+for _ in $(seq 1 15); do
+    client list $SERVER 2>/dev/null | grep -q "first.bin" && break
+    sleep 1
+done
+want "a file already in the folder is uploaded" \
+     "$(client list $SERVER)" "first.bin"
+
+# A file appearing later must be picked up without restarting anything.
+head -c 20000 /dev/urandom > "$LAB/watched/second.bin"
+for _ in $(seq 1 15); do
+    client list $SERVER 2>/dev/null | grep -q "second.bin" && break
+    sleep 1
+done
+want "a file added afterwards is picked up" \
+     "$(client list $SERVER)" "second.bin"
+
+# An unchanged file must not be uploaded again on every pass.
+BEFORE=$(grep -c "first.bin: stored" "$LAB/watch.log")
+sleep 5
+AFTER=$(grep -c "first.bin: stored" "$LAB/watch.log")
+if [ "$BEFORE" = "$AFTER" ]; then
+    ok "an unchanged file is not re-uploaded"
+else
+    bad "an unchanged file was uploaded again"
+fi
+
+kill -INT $WATCHER 2>/dev/null
+for _ in $(seq 1 10); do
+    kill -0 $WATCHER 2>/dev/null || break
+    sleep 1
+done
+kill -9 $WATCHER 2>/dev/null
+wait $WATCHER 2>/dev/null
+[ -f "$LAB/work/pending/.watch-state" ] \
+    && ok "the watcher recorded what it had seen" \
+    || bad "no watch state written"
+
+echo "=== running detached ==="
+DAEMON_PORT=$((BASE_PORT + 9))
+mkdir -p "$LAB/srv$DAEMON_PORT"
+cp "$LAB/srv$BASE_PORT/ca.crt" "$LAB/srv$BASE_PORT/ca.key" "$LAB/srv$DAEMON_PORT/"
+"$BUILD/pcs-server" $DAEMON_PORT --root "$LAB/srv$DAEMON_PORT" \
+    --daemon --log "$LAB/daemon.log" --pidfile "$LAB/daemon.pid" > /dev/null 2>&1
+sleep 2
+
+if [ -f "$LAB/daemon.pid" ] && kill -0 "$(cat "$LAB/daemon.pid")" 2>/dev/null; then
+    ok "the detached server is running and recorded its pid"
+else
+    bad "the detached server did not start"
+fi
+want "the detached server logs where it was told to" \
+     "$(cat "$LAB/daemon.log" 2>/dev/null)" "listening\|protocol"
+
+printf "%s
+%s
+" "$PCS_PASSWORD" "$PCS_PASSWORD" | \
+    "$BUILD/pcs-server" $DAEMON_PORT --root "$LAB/srv$DAEMON_PORT" \
+    useradd alice > /dev/null 2>&1
+want "the detached server answers requests" \
+     "$(client list 127.0.0.1:$DAEMON_PORT)" "no files yet"
+[ -f "$LAB/daemon.pid" ] && kill "$(cat "$LAB/daemon.pid")" 2>/dev/null
+
+want "a systemd unit can be generated" \
+     "$("$BUILD/pcs-server" $MAIN --root "$LAB/srv$MAIN" service-file 2>/dev/null)" \
+     "ExecStart="
+
 echo "=== memory does not track file size ==="
 head -c 60000000 /dev/urandom > huge.bin
 if command -v /usr/bin/time > /dev/null; then

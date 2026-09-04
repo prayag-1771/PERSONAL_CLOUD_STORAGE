@@ -18,6 +18,11 @@ int cmd_delete(const Options& options, const std::string& name);
 int cmd_sync(const Options& options);
 int cmd_autosync(const Options& options, int interval_seconds);
 
+// Watches a folder and uploads whatever appears or changes, forwarding any
+// pending files in the same loop.
+int cmd_watch(const Options& options, const std::string& folder,
+              int interval_seconds);
+
 // Local sealing, with no server involved. Useful on its own for putting an
 // encrypted copy on a USB stick, and it is what makes the container format
 // testable against another implementation.

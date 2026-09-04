@@ -18,6 +18,7 @@ find_package(Threads REQUIRED)
 
 add_library(pcs_core STATIC
     src/core/cipher.cpp
+    src/core/daemon.cpp
     src/core/digest.cpp
     src/core/erasure.cpp
     src/core/gf256.cpp
@@ -78,6 +79,7 @@ pcs_configure(pcs-server)
 add_executable(pcs-client
     src/client/main.cpp
     src/client/upload.cpp
+    src/client/watch.cpp
     src/client/download.cpp
     src/client/list.cpp
     src/client/local.cpp

@@ -2,6 +2,7 @@
 #include <iostream>
 
 #include "commands.hpp"
+#include "internal.hpp"
 #include "pcs/config.hpp"
 #include "pcs/digest.hpp"
 #include "pcs/erasure.hpp"
@@ -154,18 +155,58 @@ int distribute_to_peers(const Options& opt, const Workspace& workspace,
 
 }  // namespace
 
-int cmd_upload(const Options& opt, const string& file) {
+// The work of an upload, with the passphrase already in hand. The watcher
+// calls this directly so an unattended run never has to prompt.
+int upload_with_passphrase(const Options& opt, const Workspace& workspace,
+                           const string& file, const string& passphrase,
+                           bool verbose) {
     const fs::path source = file;
     error_code ec;
     if (!fs::exists(source, ec) || !fs::is_regular_file(source, ec)) {
-        cout << "Not a readable file: " << file << "\n";
+        if (verbose) cout << "Not a readable file: " << file << "\n";
         return 1;
     }
 
     const string name = source.filename().string();
     if (!is_safe_name(name)) {
-        cout << "That file name cannot be stored: " << name << "\n"
-             << "Names may not start with a dot or contain path separators.\n";
+        if (verbose) {
+            cout << "That file name cannot be stored: " << name << "\n"
+                 << "Names may not start with a dot or contain path "
+                    "separators.\n";
+        }
+        return 1;
+    }
+
+    string error;
+    string dedup_tag;
+    TempFile stream = workspace.temp("stream");
+    {
+        ProgressBar bar("encrypting", !opt.quiet && verbose);
+        if (!seal_file(source, stream.path(), passphrase, &dedup_tag,
+                       make_progress(bar), error)) {
+            bar.finish();
+            if (verbose) cout << "Encryption failed: " << error << "\n";
+            return 1;
+        }
+        bar.finish();
+    }
+
+    if (Remote::reachable(opt.server, opt.trust))
+        return upload_to_server(opt, name, stream.path(), dedup_tag);
+
+    if (verbose) {
+        cout << "Server " << opt.server
+             << " is offline. Falling back to peers.\n";
+    }
+    return distribute_to_peers(opt, workspace, name, stream.path(), dedup_tag);
+}
+
+
+int cmd_upload(const Options& opt, const string& file) {
+    const fs::path source = file;
+    error_code ec;
+    if (!fs::exists(source, ec) || !fs::is_regular_file(source, ec)) {
+        cout << "Not a readable file: " << file << "\n";
         return 1;
     }
 
@@ -181,26 +222,7 @@ int cmd_upload(const Options& opt, const string& file) {
         return 1;
     }
 
-    // Sealing happens once, before we know which path the upload will take,
-    // because both paths send the same ciphertext.
-    TempFile stream = workspace.temp("stream");
-    string dedup_tag;
-    {
-        ProgressBar bar("encrypting", !opt.quiet);
-        if (!seal_file(source, stream.path(), passphrase, &dedup_tag,
-                       make_progress(bar), error)) {
-            bar.finish();
-            cout << "Encryption failed: " << error << "\n";
-            return 1;
-        }
-        bar.finish();
-    }
-
-    if (Remote::reachable(opt.server, opt.trust))
-        return upload_to_server(opt, name, stream.path(), dedup_tag);
-
-    cout << "Server " << opt.server << " is offline. Falling back to peers.\n";
-    return distribute_to_peers(opt, workspace, name, stream.path(), dedup_tag);
+    return upload_with_passphrase(opt, workspace, file, passphrase, true);
 }
 
 }  // namespace client

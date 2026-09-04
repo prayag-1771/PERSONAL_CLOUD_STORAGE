@@ -71,6 +71,8 @@ tests/            unit tests, plus an end-to-end script
 | `manifest` | the record of a file waiting to reach the server |
 | `passwd` | account password verifiers |
 | `tlsca` | the local certificate authority |
+| `settings` | the `pcs.conf` settings file |
+| `daemon` | detaching, and the systemd unit |
 
 The server additionally has `http`, `webui` and `page`, which serve the
 browser client.
@@ -187,6 +189,35 @@ for one another.
 # storage/server_9000/auth.token
 ```
 
+### Settle the settings once
+
+Retyping a token, a server address and four peer addresses on every command
+gets old immediately. Put them in `pcs.conf`, in the working directory or at
+`~/.config/pcs/pcs.conf`:
+
+```ini
+[default]
+server = 192.168.1.10:9000
+user   = alice
+token  = 1a2b3c...
+cacert = /home/alice/pcs-ca.crt
+peers  = 192.168.1.11:9000, 192.168.1.12:9000, 192.168.1.13:9000, 192.168.1.14:9000
+watch  = /home/alice/Pictures
+```
+
+After that `pcs-client upload holiday.jpg` is the whole command. Anything given
+on the command line or in the environment still wins; the file only fills in
+what was left out. `--profile <name>` selects another section, and a profile
+inherits nothing from `[default]`, so profiles cannot leak into each other.
+
+`pcs-client config` shows which file was found and what it sets.
+
+Keep the file readable only by you, since it can hold a token and a password:
+
+```bash
+chmod 600 ~/.config/pcs/pcs.conf
+```
+
 ### Store a file
 
 ```bash
@@ -211,6 +242,23 @@ If the server is down, name four peers and the pieces go there instead:
 
 Works whether the file is on the server or still scattered across peers.
 
+### Back up a folder automatically
+
+```bash
+./build/pcs-client watch ~/Pictures 30
+./build/pcs-client watch --daemon        # folder taken from pcs.conf
+```
+
+Anything that appears or changes in the folder is encrypted and uploaded.
+Size and modification time are recorded, so an unchanged file is not sent
+again, and a file that fails is retried on the next pass rather than being
+marked done. Pending files left over from an offline spell are forwarded in
+the same loop, so one process covers both jobs.
+
+The passphrase is asked for once at the start; supply it with `--keyfile` or
+`PCS_PASSPHRASE` when running detached. Only the top level of the folder is
+watched, since stored names are single components with no directory part.
+
 ### Forward what is pending
 
 ```bash
@@ -230,6 +278,14 @@ Neither asks for a passphrase.
 Useful for putting an encrypted copy on a USB stick, and it is what makes the
 container format testable against another implementation.
 
+### Remove something
+
+```bash
+./build/pcs-client delete holiday.jpg
+```
+
+There are no versions and no undo.
+
 ### See what is stored
 
 ```bash
@@ -242,6 +298,12 @@ container format testable against another implementation.
 |---|---|
 | `--token <token>` | server token, or set `PCS_TOKEN` |
 | `--keyfile <path>` | read the passphrase from a file instead of prompting |
+| `--server <addr>` | the server, when not given positionally |
+| `--out <path>` | where a download is written |
+| `--config <path>` | settings file to use |
+| `--profile <name>` | section of the settings file |
+| `--daemon` | detach (`watch` and `autosync`) |
+| `--log <path>`, `--pidfile <path>` | where a detached run writes output and its pid |
 | `--dir <path>` | where pending files are tracked (default: `.`) |
 | `--quiet` | no progress bars |
 

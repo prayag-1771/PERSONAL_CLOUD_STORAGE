@@ -6,6 +6,7 @@
 #include <thread>
 
 #include "commands.hpp"
+#include "internal.hpp"
 #include "pcs/manifest.hpp"
 #include "pcs/progress.hpp"
 #include "recover.hpp"
@@ -125,6 +126,10 @@ SyncResult sync_once(const Options& opt, const Workspace& workspace,
 }
 
 }  // namespace
+
+int sync_pass(const Options& opt, const Workspace& workspace, bool verbose) {
+    return sync_once(opt, workspace, verbose).synced;
+}
 
 int cmd_sync(const Options& opt) {
     string error;
