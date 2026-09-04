@@ -13,109 +13,234 @@ const string& web_page() {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>Personal Cloud</title>
 <style>
   :root {
-    color-scheme: light dark;
-    --bg: #f6f7f9; --card: #ffffff; --ink: #16181d; --muted: #6b7280;
-    --line: #e3e6ea; --accent: #2f6feb; --bad: #b3261e; --good: #1a7f37;
+    --bg: #f4f5f7;
+    --card: #ffffff;
+    --ink: #14161a;
+    --muted: #666e7a;
+    --faint: #9aa2ad;
+    --line: #e2e5ea;
+    --line-soft: #eef0f3;
+    --accent: #2f6feb;
+    --accent-ink: #ffffff;
+    --bad: #b3261e;
+    --good: #1a7f37;
+    --shadow: 0 1px 2px rgba(16, 22, 30, .06), 0 8px 24px rgba(16, 22, 30, .06);
+    --radius: 12px;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #14161a; --card: #1c1f25; --ink: #e8eaed; --muted: #9aa1ab;
-      --line: #2c313a; --accent: #6c9cf0;
+      --bg: #0f1115;
+      --card: #171a20;
+      --ink: #e9ecf1;
+      --muted: #9aa3af;
+      --faint: #6b7482;
+      --line: #262b33;
+      --line-soft: #1f242b;
+      --accent: #5b8def;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .3);
     }
   }
+
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
-    margin: 0; background: var(--bg); color: var(--ink);
-    font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
-  main { max-width: 720px; margin: 0 auto; padding: 24px 16px 64px; }
-  h1 { font-size: 20px; margin: 0; }
-  header {
-    display: flex; align-items: baseline; justify-content: space-between;
-    gap: 12px; margin-bottom: 20px;
+
+  .wrap { max-width: 780px; margin: 0 auto; padding: 28px 18px 80px; }
+
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 14px; margin-bottom: 22px;
   }
-  .who { color: var(--muted); font-size: 13px; }
+  .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .brand .mark {
+    width: 30px; height: 30px; border-radius: 8px; flex: 0 0 auto;
+    background: linear-gradient(140deg, var(--accent), #7aa7f5);
+  }
+  .brand h1 { font-size: 17px; font-weight: 620; margin: 0; letter-spacing: -.2px; }
+  .session { display: flex; align-items: center; gap: 10px; }
+  .session .name { font-size: 13px; color: var(--muted); }
+
   .card {
-    background: var(--card); border: 1px solid var(--line);
-    border-radius: 10px; padding: 18px; margin-bottom: 16px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 20px;
+    margin-bottom: 16px;
   }
-  label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
-  input[type=text], input[type=password] {
-    width: 100%; padding: 9px 11px; border: 1px solid var(--line);
-    border-radius: 7px; background: var(--bg); color: var(--ink); font: inherit;
+  .card h2 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+  .lede { color: var(--muted); font-size: 13.5px; margin: 0 0 16px; }
+
+  label { display: block; font-size: 12.5px; color: var(--muted); margin: 12px 0 5px; font-weight: 500; }
+  input[type=text], input[type=password], input[type=search] {
+    width: 100%; padding: 10px 12px;
+    border: 1px solid var(--line); border-radius: 9px;
+    background: var(--bg); color: var(--ink);
+    font: inherit; outline: none;
   }
+  input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(47, 111, 235, .16); }
+
   button {
-    padding: 9px 15px; border: 0; border-radius: 7px; background: var(--accent);
-    color: #fff; font: inherit; font-weight: 500; cursor: pointer;
+    padding: 9px 15px; border: 1px solid transparent; border-radius: 9px;
+    background: var(--accent); color: var(--accent-ink);
+    font: inherit; font-weight: 550; cursor: pointer;
   }
-  button.quiet { background: transparent; color: var(--muted); border: 1px solid var(--line); }
-  button:disabled { opacity: .55; cursor: default; }
-  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  button:hover { filter: brightness(1.06); }
+  button:disabled { opacity: .5; cursor: default; filter: none; }
+  button.ghost {
+    background: transparent; color: var(--muted); border-color: var(--line);
+    font-weight: 500; padding: 6px 11px; font-size: 13px;
+  }
+  button.ghost:hover { color: var(--ink); border-color: var(--faint); filter: none; }
+  button.danger:hover { color: var(--bad); border-color: var(--bad); }
+  button.block { width: 100%; padding: 11px; }
+
+  .row { display: flex; gap: 10px; align-items: center; }
+  .grow { flex: 1 1 auto; min-width: 0; }
+
   .drop {
-    border: 2px dashed var(--line); border-radius: 10px; padding: 26px;
-    text-align: center; color: var(--muted); cursor: pointer;
+    border: 1.5px dashed var(--line); border-radius: var(--radius);
+    padding: 30px 18px; text-align: center; color: var(--muted);
+    cursor: pointer; transition: border-color .15s, background .15s;
   }
-  .drop.over { border-color: var(--accent); color: var(--accent); }
+  .drop:hover { border-color: var(--faint); }
+  .drop.over { border-color: var(--accent); background: rgba(47, 111, 235, .06); color: var(--accent); }
+  .drop .big { font-size: 15px; color: var(--ink); font-weight: 550; }
+  .drop .small { font-size: 12.5px; margin-top: 3px; }
+
+  .queue { margin-top: 14px; display: grid; gap: 8px; }
+  .job {
+    display: grid; grid-template-columns: 1fr auto; gap: 4px 10px;
+    align-items: center; font-size: 13.5px;
+    padding: 9px 11px; border: 1px solid var(--line-soft);
+    border-radius: 9px; background: var(--bg);
+  }
+  .job .who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .job .state { color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+  .job .track { grid-column: 1 / -1; height: 3px; background: var(--line); border-radius: 3px; overflow: hidden; }
+  .job .track > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .12s linear; }
+  .job.done .state { color: var(--good); }
+  .job.failed .state { color: var(--bad); }
+
+  .listhead {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; margin-bottom: 12px; flex-wrap: wrap;
+  }
+  .tools { display: flex; gap: 8px; align-items: center; }
+  .tools input[type=search] { width: 190px; padding: 7px 11px; font-size: 13.5px; }
+  select {
+    padding: 7px 10px; border: 1px solid var(--line); border-radius: 9px;
+    background: var(--bg); color: var(--ink); font: inherit; font-size: 13.5px;
+  }
+
   table { width: 100%; border-collapse: collapse; }
-  td { padding: 9px 4px; border-top: 1px solid var(--line); vertical-align: middle; }
-  td.size { color: var(--muted); font-size: 13px; text-align: right; white-space: nowrap; }
+  tbody tr { border-top: 1px solid var(--line-soft); }
+  tbody tr:hover { background: var(--bg); }
+  td { padding: 11px 6px; vertical-align: middle; }
+  td.icon { width: 1%; padding-right: 2px; font-size: 17px; opacity: .85; }
+  td.name { min-width: 0; }
+  td.name .n { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  td.name .m { display: block; font-size: 12px; color: var(--faint); }
+  td.size { text-align: right; color: var(--muted); font-size: 13px; white-space: nowrap; }
   td.act { text-align: right; width: 1%; white-space: nowrap; }
-  .note { font-size: 13px; color: var(--muted); margin-top: 10px; }
-  .bad { color: var(--bad); }
-  .good { color: var(--good); }
-  .bar { height: 4px; background: var(--line); border-radius: 3px; overflow: hidden; margin-top: 10px; }
-  .bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .15s; }
-  .hide { display: none; }
+  td.act button + button { margin-left: 6px; }
+
+  .empty { text-align: center; color: var(--muted); padding: 26px 10px; }
+  .empty .big { font-size: 15px; color: var(--ink); font-weight: 550; margin-bottom: 3px; }
+
+  .msg { font-size: 13px; margin-top: 10px; min-height: 18px; color: var(--muted); }
+  .msg.bad { color: var(--bad); }
+  .msg.good { color: var(--good); }
+  .foot { text-align: center; color: var(--faint); font-size: 12px; margin-top: 22px; }
+  .hide { display: none !important; }
+
+  @media (max-width: 560px) {
+    .wrap { padding: 18px 12px 60px; }
+    .tools input[type=search] { width: 130px; }
+    td.size { display: none; }
+  }
 </style>
 </head>
 <body>
-<main>
-  <header>
-    <h1>Personal Cloud</h1>
-    <span class="who" id="who"></span>
-  </header>
+<div class="wrap">
+  <div class="topbar">
+    <div class="brand">
+      <div class="mark"></div>
+      <h1>Personal Cloud</h1>
+    </div>
+    <div class="session hide" id="session">
+      <span class="name" id="who"></span>
+      <button class="ghost" id="signout">Sign out</button>
+    </div>
+  </div>
 
-  <section class="card" id="signin">
-    <strong>Sign in</strong>
+  <div class="card" id="signin">
+    <h2>Sign in</h2>
+    <p class="lede">
+      Two secrets, and they do different jobs. The password proves who you
+      are to the server. The passphrase encrypts your files here in this tab
+      and is never sent anywhere &mdash; without it nobody can read them, and
+      neither can you.
+    </p>
     <label for="user">Account</label>
-    <input type="text" id="user" autocomplete="username" autocapitalize="none">
+    <input type="text" id="user" autocomplete="username" autocapitalize="none" spellcheck="false">
     <label for="password">Password</label>
     <input type="password" id="password" autocomplete="current-password">
     <label for="passphrase">Encryption passphrase</label>
     <input type="password" id="passphrase" autocomplete="off">
-    <p class="note">
-      Two different secrets. The password proves who you are to the server.
-      The passphrase encrypts your files here in this tab and is never sent
-      anywhere, so nobody can recover your files without it.
-    </p>
-    <div class="row" style="margin-top:12px">
-      <button id="go">Sign in</button>
-      <span id="signin-msg" class="note"></span>
+    <div style="margin-top:16px">
+      <button class="block" id="go">Sign in</button>
     </div>
-  </section>
+    <div class="msg" id="signin-msg"></div>
+  </div>
 
-  <section class="card hide" id="uploader">
-    <div class="drop" id="drop">Drop files here, or click to choose</div>
+  <div class="card hide" id="uploader">
+    <div class="drop" id="drop">
+      <div class="big">Drop files here</div>
+      <div class="small">or click to choose &mdash; they are encrypted before they leave this device</div>
+    </div>
     <input type="file" id="picker" multiple class="hide">
-    <div class="bar hide" id="bar"><i id="barfill"></i></div>
-    <div class="note" id="upload-msg"></div>
-  </section>
+    <div class="queue" id="queue"></div>
+  </div>
 
-  <section class="card hide" id="files">
-    <div class="row" style="justify-content:space-between">
-      <strong>Your files</strong>
-      <button class="quiet" id="signout">Sign out</button>
+  <div class="card hide" id="files">
+    <div class="listhead">
+      <div>
+        <h2 style="margin:0">Your files</h2>
+        <div class="lede" style="margin:2px 0 0" id="summary"></div>
+      </div>
+      <div class="tools">
+        <input type="search" id="filter" placeholder="Filter" autocomplete="off">
+        <select id="sort">
+          <option value="name">Name</option>
+          <option value="new">Newest</option>
+          <option value="big">Largest</option>
+        </select>
+      </div>
     </div>
     <table><tbody id="rows"></tbody></table>
-    <div class="note" id="files-msg"></div>
-  </section>
-</main>
+    <div class="empty hide" id="empty">
+      <div class="big">Nothing stored yet</div>
+      <div>Drop a file above to get started.</div>
+    </div>
+    <div class="msg" id="files-msg"></div>
+  </div>
+
+  <div class="foot">Files are encrypted on this device. The server only ever holds ciphertext.</div>
+</div>
 
 <script>
-// The container format, reproduced exactly as the C++ implementation writes
+// The sealed container, reproduced exactly as the C++ implementation writes
 // it. Anything sealed here opens with the command-line client and the other
 // way round, so the two must agree byte for byte.
 const BLOCK_SIZE = 1048576;
@@ -129,10 +254,11 @@ const VERSION = 1;
 const CONTENT_LABEL = "pcs-content-v1";
 
 const text = new TextEncoder();
+const $ = (id) => document.getElementById(id);
+
 let session = null;
 let passphrase = "";
-
-const $ = (id) => document.getElementById(id);
+let files = [];
 
 function concat(parts) {
   let total = 0;
@@ -214,10 +340,9 @@ async function sealFile(file, onProgress) {
 
     // WebCrypto appends the tag; the container keeps them as separate
     // fields, so split it back off here.
-    const body = sealed.subarray(0, sealed.length - TAG_LEN);
-    const tag = sealed.subarray(sealed.length - TAG_LEN);
-
-    parts.push(iv, le32(body.length), body, tag);
+    parts.push(iv, le32(sealed.length - TAG_LEN),
+               sealed.subarray(0, sealed.length - TAG_LEN),
+               sealed.subarray(sealed.length - TAG_LEN));
 
     done = end;
     index += 1;
@@ -225,7 +350,7 @@ async function sealFile(file, onProgress) {
   }
 
   // A Blob lets the browser keep the sealed copy on disk rather than in
-  // memory, which is what makes a large file survive this.
+  // memory, which is what lets a large file get through this at all.
   return new Blob(parts);
 }
 
@@ -291,14 +416,33 @@ function humanSize(bytes) {
   return (unit === 0 ? value : value.toFixed(1)) + " " + units[unit];
 }
 
-function showProgress(done, total) {
-  $("bar").classList.remove("hide");
-  $("barfill").style.width = (total ? (done * 100 / total) : 100) + "%";
+function whenText(seconds) {
+  if (!seconds) return "";
+  const then = new Date(seconds * 1000);
+  const ago = (Date.now() - then.getTime()) / 1000;
+  if (ago < 60) return "just now";
+  if (ago < 3600) return Math.floor(ago / 60) + " min ago";
+  if (ago < 86400) return Math.floor(ago / 3600) + " hr ago";
+  if (ago < 604800) return Math.floor(ago / 86400) + " days ago";
+  return then.toLocaleDateString();
 }
 
-function hideProgress() {
-  $("bar").classList.add("hide");
-  $("barfill").style.width = "0%";
+function iconFor(name) {
+  const dot = name.lastIndexOf(".");
+  const ext = dot < 0 ? "" : name.slice(dot + 1).toLowerCase();
+  if (["jpg", "jpeg", "png", "gif", "webp", "heic", "bmp", "svg"].includes(ext)) return "\u{1F5BC}";
+  if (["mp4", "mov", "mkv", "avi", "webm"].includes(ext)) return "\u{1F3AC}";
+  if (["mp3", "wav", "flac", "m4a", "ogg"].includes(ext)) return "\u{1F3B5}";
+  if (["pdf"].includes(ext)) return "\u{1F4C4}";
+  if (["zip", "gz", "tar", "7z", "rar"].includes(ext)) return "\u{1F5DC}";
+  if (["txt", "md", "rtf", "doc", "docx"].includes(ext)) return "\u{1F4DD}";
+  return "\u{1F4E6}";
+}
+
+function say(where, message, kind) {
+  const node = $(where);
+  node.textContent = message || "";
+  node.className = "msg" + (kind ? " " + kind : "");
 }
 
 async function api(path, options) {
@@ -308,20 +452,199 @@ async function api(path, options) {
   return fetch(path, settings);
 }
 
+// --- the upload queue -----------------------------------------------------
+
+function addJob(name) {
+  const job = document.createElement("div");
+  job.className = "job";
+
+  const who = document.createElement("div");
+  who.className = "who";
+  who.textContent = name;
+
+  const state = document.createElement("div");
+  state.className = "state";
+  state.textContent = "waiting";
+
+  const track = document.createElement("div");
+  track.className = "track";
+  const fill = document.createElement("i");
+  track.appendChild(fill);
+
+  job.append(who, state, track);
+  $("queue").appendChild(job);
+
+  return {
+    progress(done, total) { fill.style.width = (total ? done * 100 / total : 100) + "%"; },
+    status(word, kind) {
+      state.textContent = word;
+      job.className = "job" + (kind ? " " + kind : "");
+    },
+    retire(delay) { setTimeout(() => job.remove(), delay); },
+  };
+}
+
+async function upload(chosen) {
+  for (const file of chosen) {
+    const job = addJob(file.name);
+    try {
+      job.status("encrypting");
+      const sealed = await sealFile(file, job.progress);
+
+      job.status("uploading");
+      job.progress(0, 1);
+      const reply = await api("/api/files/" + encodeURIComponent(file.name), {
+        method: "PUT",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: sealed,
+      });
+      if (!reply.ok) {
+        const data = await reply.json().catch(() => ({}));
+        throw new Error(data.error || "upload failed");
+      }
+
+      job.progress(1, 1);
+      job.status("stored", "done");
+      job.retire(2500);
+    } catch (e) {
+      job.status(e.message, "failed");
+      job.retire(9000);
+    }
+  }
+  await refresh();
+}
+
+// --- the file list --------------------------------------------------------
+
+function render() {
+  const needle = $("filter").value.trim().toLowerCase();
+  const order = $("sort").value;
+
+  let shown = files.filter((f) => !needle || f.name.toLowerCase().includes(needle));
+  shown.sort((a, b) => {
+    if (order === "big") return b.size - a.size;
+    if (order === "new") return b.modified - a.modified;
+    return a.name.localeCompare(b.name);
+  });
+
+  const rows = $("rows");
+  rows.textContent = "";
+
+  for (const file of shown) {
+    const tr = document.createElement("tr");
+
+    const icon = document.createElement("td");
+    icon.className = "icon";
+    icon.textContent = iconFor(file.name);
+
+    const name = document.createElement("td");
+    name.className = "name";
+    const line = document.createElement("span");
+    line.className = "n";
+    line.textContent = file.name;
+    const meta = document.createElement("span");
+    meta.className = "m";
+    meta.textContent = whenText(file.modified);
+    name.append(line, meta);
+
+    const size = document.createElement("td");
+    size.className = "size";
+    size.textContent = humanSize(file.size);
+
+    const act = document.createElement("td");
+    act.className = "act";
+    const get = document.createElement("button");
+    get.className = "ghost";
+    get.textContent = "Download";
+    get.onclick = () => download(file.name, get);
+    const drop = document.createElement("button");
+    drop.className = "ghost danger";
+    drop.textContent = "Delete";
+    drop.onclick = () => remove(file.name);
+    act.append(get, drop);
+
+    tr.append(icon, name, size, act);
+    rows.appendChild(tr);
+  }
+
+  const nothing = files.length === 0;
+  $("empty").classList.toggle("hide", !nothing);
+
+  const total = files.reduce((sum, f) => sum + f.size, 0);
+  $("summary").textContent = nothing
+    ? ""
+    : files.length + (files.length === 1 ? " file" : " files") +
+      " · " + humanSize(total) + " stored" +
+      (shown.length !== files.length ? " · " + shown.length + " shown" : "");
+}
+
+async function refresh() {
+  const reply = await api("/api/files");
+  if (!reply.ok) { say("files-msg", "Could not list your files.", "bad"); return; }
+
+  const data = await reply.json();
+  files = data.files || [];
+  render();
+}
+</script>
+
+<script>
+async function download(name, button) {
+  button.disabled = true;
+  say("files-msg", "Fetching " + name + "...");
+  try {
+    const reply = await api("/api/files/" + encodeURIComponent(name));
+    if (!reply.ok) throw new Error("could not fetch it");
+
+    const sealed = await reply.blob();
+    say("files-msg", "Decrypting " + name + "...");
+
+    const plain = await openBlob(sealed, null);
+
+    const url = URL.createObjectURL(plain);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = name;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+
+    say("files-msg", "Saved " + name + ".", "good");
+  } catch (e) {
+    say("files-msg", name + ": " + e.message, "bad");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function remove(name) {
+  // Irreversible, with no versions to fall back on, so it asks first.
+  if (!confirm("Delete " + name + "? This cannot be undone.")) return;
+
+  const reply = await api("/api/files/" + encodeURIComponent(name), {
+    method: "DELETE",
+  });
+  if (reply.ok) {
+    say("files-msg", "Deleted " + name + ".");
+  } else {
+    say("files-msg", "Could not delete " + name + ".", "bad");
+  }
+  await refresh();
+}
+
+// --- signing in -----------------------------------------------------------
+
 async function signIn() {
   const user = $("user").value.trim();
   const password = $("password").value;
-  passphrase = $("passphrase").value;
+  const secret = $("passphrase").value;
 
-  if (!user || !password || !passphrase) {
-    $("signin-msg").textContent = "Fill in all three fields.";
-    $("signin-msg").className = "note bad";
+  if (!user || !password || !secret) {
+    say("signin-msg", "All three are needed.", "bad");
     return;
   }
 
   $("go").disabled = true;
-  $("signin-msg").textContent = "Signing in...";
-  $("signin-msg").className = "note";
+  say("signin-msg", "Signing in...");
 
   try {
     const reply = await fetch("/api/login", {
@@ -333,147 +656,30 @@ async function signIn() {
     if (!reply.ok) throw new Error(data.error || "sign-in failed");
 
     session = data;
-    // The password has done its job; the passphrase stays only in memory.
+    passphrase = secret;
+
+    // The password has done its job. The passphrase stays in memory only,
+    // which is why closing the tab means typing it again.
     $("password").value = "";
     $("passphrase").value = "";
 
     $("signin").classList.add("hide");
     $("uploader").classList.remove("hide");
     $("files").classList.remove("hide");
-    $("who").textContent = "signed in as " + session.user;
+    $("session").classList.remove("hide");
+    $("who").textContent = session.user;
+
+    say("signin-msg", "");
     await refresh();
   } catch (e) {
-    $("signin-msg").textContent = e.message;
-    $("signin-msg").className = "note bad";
+    say("signin-msg", e.message, "bad");
   } finally {
     $("go").disabled = false;
   }
 }
 
-async function refresh() {
-  const reply = await api("/api/files");
-  if (!reply.ok) { $("files-msg").textContent = "Could not list files."; return; }
-
-  const data = await reply.json();
-  const rows = $("rows");
-  rows.textContent = "";
-
-  if (!data.files.length) {
-    $("files-msg").textContent = "Nothing stored yet.";
-    return;
-  }
-  $("files-msg").textContent = "";
-
-  for (const file of data.files) {
-    const tr = document.createElement("tr");
-
-    const name = document.createElement("td");
-    name.textContent = file.name;
-
-    const size = document.createElement("td");
-    size.className = "size";
-    size.textContent = humanSize(file.size) + " sealed";
-
-    const act = document.createElement("td");
-    act.className = "act";
-    const get = document.createElement("button");
-    get.className = "quiet";
-    get.textContent = "Download";
-    get.onclick = () => download(file.name, get);
-
-    const drop = document.createElement("button");
-    drop.className = "quiet";
-    drop.textContent = "Delete";
-    drop.style.marginLeft = "6px";
-    drop.onclick = () => remove(file.name);
-
-    act.append(get, drop);
-
-    tr.append(name, size, act);
-    rows.appendChild(tr);
-  }
-}
-
-async function upload(files) {
-  for (const file of files) {
-    $("upload-msg").textContent = "Encrypting " + file.name + "...";
-    $("upload-msg").className = "note";
-    try {
-      const sealed = await sealFile(file, showProgress);
-
-      $("upload-msg").textContent = "Uploading " + file.name + "...";
-      const reply = await api("/api/files/" + encodeURIComponent(file.name), {
-        method: "PUT",
-        headers: { "Content-Type": "application/octet-stream" },
-        body: sealed,
-      });
-      if (!reply.ok) {
-        const data = await reply.json().catch(() => ({}));
-        throw new Error(data.error || "upload failed");
-      }
-
-      $("upload-msg").textContent = "Stored " + file.name + ".";
-      $("upload-msg").className = "note good";
-    } catch (e) {
-      $("upload-msg").textContent = file.name + ": " + e.message;
-      $("upload-msg").className = "note bad";
-    } finally {
-      hideProgress();
-    }
-  }
-  await refresh();
-}
-
-async function remove(name) {
-  // Deleting is irreversible and there are no versions to fall back on, so
-  // it asks first.
-  if (!confirm("Delete " + name + "? This cannot be undone.")) return;
-
-  const reply = await api("/api/files/" + encodeURIComponent(name), {
-    method: "DELETE",
-  });
-  if (reply.ok) {
-    $("files-msg").textContent = "Deleted " + name + ".";
-    $("files-msg").className = "note";
-  } else {
-    $("files-msg").textContent = "Could not delete " + name + ".";
-    $("files-msg").className = "note bad";
-  }
-  await refresh();
-}
-
-async function download(name, button) {
-  button.disabled = true;
-  $("files-msg").textContent = "Fetching " + name + "...";
-  $("files-msg").className = "note";
-  try {
-    const reply = await api("/api/files/" + encodeURIComponent(name));
-    if (!reply.ok) throw new Error("could not fetch it");
-
-    const sealed = await reply.blob();
-    $("files-msg").textContent = "Decrypting " + name + "...";
-
-    const plain = await openBlob(sealed, showProgress);
-
-    const url = URL.createObjectURL(plain);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = name;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 30000);
-
-    $("files-msg").textContent = "Saved " + name + ".";
-    $("files-msg").className = "note good";
-  } catch (e) {
-    $("files-msg").textContent = name + ": " + e.message;
-    $("files-msg").className = "note bad";
-  } finally {
-    hideProgress();
-    button.disabled = false;
-  }
-}
-
 $("go").onclick = signIn;
+$("user").onkeydown = (e) => { if (e.key === "Enter") $("password").focus(); };
 $("password").onkeydown = (e) => { if (e.key === "Enter") $("passphrase").focus(); };
 $("passphrase").onkeydown = (e) => { if (e.key === "Enter") signIn(); };
 
@@ -485,7 +691,10 @@ $("signout").onclick = async () => {
 };
 
 $("drop").onclick = () => $("picker").click();
-$("picker").onchange = () => { if ($("picker").files.length) upload($("picker").files); };
+$("picker").onchange = () => {
+  if ($("picker").files.length) upload($("picker").files);
+  $("picker").value = "";
+};
 
 $("drop").ondragover = (e) => { e.preventDefault(); $("drop").classList.add("over"); };
 $("drop").ondragleave = () => $("drop").classList.remove("over");
@@ -495,15 +704,19 @@ $("drop").ondrop = (e) => {
   if (e.dataTransfer.files.length) upload(e.dataTransfer.files);
 };
 
-if (!crypto || !crypto.subtle) {
-  // Without a secure context there is no WebCrypto, and this page cannot
-  // encrypt anything. Better to say so than to appear to work.
-  $("signin-msg").textContent =
-    "This browser will not allow encryption on this page. Install the " +
-    "server CA certificate and open the site over https.";
-  $("signin-msg").className = "note bad";
+$("filter").oninput = render;
+$("sort").onchange = render;
+
+// Without a secure context there is no WebCrypto, and this page cannot
+// encrypt anything. Better to say so plainly than to appear to work.
+if (!window.crypto || !window.crypto.subtle) {
+  say("signin-msg",
+      "This browser will not allow encryption on this page. Install the " +
+      "server CA certificate and open the site over https.", "bad");
   $("go").disabled = true;
 }
+
+$("user").focus();
 </script>
 </body>
 </html>

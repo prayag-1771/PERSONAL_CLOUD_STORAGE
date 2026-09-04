@@ -34,6 +34,16 @@ keys and seals and opens files in the browser with WebCrypto, using the same
 container format as the command-line client. The passphrase never leaves the
 tab, and what travels over HTTP is already ciphertext.
 
+It does the things a file view should: drag and drop or pick files, an upload
+queue showing progress per file, download and delete, filtering and sorting by
+name, size or date, and a layout that works on a phone. It follows the system
+light or dark setting.
+
+Signing in asks for two secrets, because they do different jobs: the account
+password proves who you are to the server, and the passphrase encrypts the
+files and is held only in the tab's memory. Closing the tab means entering the
+passphrase again, which is the point of never storing it.
+
 That is what makes a browser front end compatible with the rest of the design.
 A conventional web app would have had to hand the server plaintext.
 
