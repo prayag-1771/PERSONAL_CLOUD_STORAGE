@@ -20,7 +20,7 @@ int cmd_list(const Options& opt) {
         return 1;
     }
 
-    vector<pair<string, uint64_t>> files;
+    vector<Remote::Listed> files;
     if (!remote->list(files, error)) {
         cout << "Listing failed: " << error << "\n";
         return 1;
@@ -33,13 +33,14 @@ int cmd_list(const Options& opt) {
     }
 
     size_t widest = 0;
-    for (const pair<string, uint64_t>& entry : files)
-        widest = max(widest, entry.first.size());
+    for (const Remote::Listed& entry : files)
+        widest = max(widest, entry.name.size());
 
     cout << "Files on " << opt.server << ":\n";
-    for (const pair<string, uint64_t>& entry : files) {
-        cout << "  " << left << setw(static_cast<int>(widest)) << entry.first
-             << "  " << human_size(entry.second) << " sealed\n";
+    for (const Remote::Listed& entry : files) {
+        cout << "  " << left << setw(static_cast<int>(widest)) << entry.name
+             << "  " << right << setw(10) << human_size(entry.size)
+             << " sealed\n";
     }
     cout << files.size() << " file(s).\n";
     return 0;

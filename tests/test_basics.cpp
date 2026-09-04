@@ -76,6 +76,40 @@ PCS_TEST(protocol_split_handles_spacing) {
     CHECK_EQ(proto::split("  LIST  ").size(), size_t{1});
 }
 
+PCS_TEST(split_n_keeps_the_last_field_whole) {
+    // File names may contain spaces, so every command carrying one puts it
+    // last and parses the remainder verbatim.
+    vector<string> f = proto::split_n("PUTFILE 1024 abcd holiday photo.jpg", 4);
+    CHECK_EQ(f.size(), size_t{4});
+    CHECK_EQ(f[0], string("PUTFILE"));
+    CHECK_EQ(f[1], string("1024"));
+    CHECK_EQ(f[2], string("abcd"));
+    CHECK_EQ(f[3], string("holiday photo.jpg"));
+
+    // Repeated spaces inside the name survive too, which a rebuild from
+    // split fields would have quietly collapsed.
+    f = proto::split_n("GETFILE two  spaces.txt", 2);
+    CHECK_EQ(f.size(), size_t{2});
+    CHECK_EQ(f[1], string("two  spaces.txt"));
+
+    // Leading spaces before the final field are not part of it.
+    f = proto::split_n("STAT    name.txt", 2);
+    CHECK_EQ(f[1], string("name.txt"));
+
+    // Fewer fields than the limit is not an error, it just yields fewer.
+    f = proto::split_n("LIST", 3);
+    CHECK_EQ(f.size(), size_t{1});
+
+    CHECK_EQ(proto::split_n("", 2).size(), size_t{0});
+    CHECK_EQ(proto::split_n("anything", 0).size(), size_t{0});
+}
+
+PCS_TEST(names_with_spaces_are_accepted) {
+    // is_safe_name permits spaces, so the wire format has to as well.
+    CHECK(is_safe_name("holiday photo.jpg"));
+    CHECK(is_safe_name("two  spaces.txt"));
+}
+
 PCS_TEST(protocol_size_parsing_is_bounded) {
     uint64_t value = 0;
 

@@ -166,7 +166,7 @@ bool WebUi::serve_logout(Channel& channel, const HttpRequest& request) {
 }
 
 bool WebUi::serve_list(Channel& channel, const string& user) {
-    vector<pair<string, uint64_t>> files;
+    vector<Store::StoredFile> files;
     {
         lock_guard<mutex> guard(store_.mutex());
         files = store_.list_files(user);
@@ -175,8 +175,9 @@ bool WebUi::serve_list(Channel& channel, const string& user) {
     string body = R"({"files":[)";
     for (size_t i = 0; i < files.size(); i++) {
         if (i) body += ",";
-        body += R"({"name":")" + json_escape(files[i].first) +
-                R"(","size":)" + to_string(files[i].second) + "}";
+        body += R"({"name":")" + json_escape(files[i].name) +
+                R"(","size":)" + to_string(files[i].size) +
+                R"(,"modified":)" + to_string(files[i].modified) + "}";
     }
     body += "]}";
 

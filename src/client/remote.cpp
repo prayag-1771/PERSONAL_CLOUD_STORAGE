@@ -1,6 +1,7 @@
 #include "remote.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <fstream>
 
 #include "pcs/config.hpp"
@@ -199,9 +200,10 @@ bool Remote::put_file(const string& name, const fs::path& source,
         return false;
     }
 
-    if (!channel_->send_line(string(proto::kPutFile) + " " + name + " " +
-                             to_string(size) + " " +
-                             (dedup_tag.empty() ? "-" : dedup_tag))) {
+    // Size and tag first, name last: names may contain spaces.
+    if (!channel_->send_line(string(proto::kPutFile) + " " + to_string(size) +
+                             " " + (dedup_tag.empty() ? "-" : dedup_tag) + " " +
+                             name)) {
         error = "request failed";
         return false;
     }
@@ -356,8 +358,7 @@ bool Remote::del_chunk(const string& id, string& error) {
     return true;
 }
 
-bool Remote::list(vector<pair<string, uint64_t>>& out,
-                  string& error) {
+bool Remote::list(vector<Listed>& out, string& error) {
     if (!channel_->send_line(proto::kList)) {
         error = "request failed";
         return false;
@@ -389,11 +390,16 @@ bool Remote::list(vector<pair<string, uint64_t>>& out,
             error = "listing ended early";
             return false;
         }
-        const vector<string> f = proto::split(line);
-        if (f.size() != 2) continue;
-        uint64_t size = 0;
-        proto::parse_size(f[1], config::kMaxTransferSize, size);
-        out.emplace_back(f[0], size);
+        // "<size> <modified> <name>", the name taking the rest of the line.
+        const vector<string> f = proto::split_n(line, 3);
+        if (f.size() != 3) continue;
+
+        Listed entry;
+        if (!proto::parse_size(f[0], config::kMaxTransferSize, entry.size))
+            continue;
+        entry.modified = strtoll(f[1].c_str(), nullptr, 10);
+        entry.name = f[2];
+        out.push_back(entry);
     }
     return true;
 }

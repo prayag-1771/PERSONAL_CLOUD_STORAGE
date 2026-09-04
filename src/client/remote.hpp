@@ -64,8 +64,13 @@ public:
 
     bool del_chunk(const std::string& id, std::string& error);
 
-    bool list(std::vector<std::pair<std::string, uint64_t>>& out,
-              std::string& error);
+    struct Listed {
+        std::string name;
+        uint64_t size = 0;
+        int64_t modified = 0;
+    };
+
+    bool list(std::vector<Listed>& out, std::string& error);
 
     void quit();
 

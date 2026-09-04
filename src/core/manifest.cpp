@@ -86,8 +86,11 @@ bool Manifest::read(const fs::path& path, Manifest& out, string& error) {
         const string& key = f[0];
         if (key == "server" && f.size() == 2) {
             parsed.server = f[1];
-        } else if (key == "name" && f.size() == 2) {
-            parsed.name = f[1];
+        } else if (key == "name") {
+            // The name takes the rest of the line, since it may contain
+            // spaces just like it may on the wire.
+            const vector<string> pair_fields = proto::split_n(line, 2);
+            if (pair_fields.size() == 2) parsed.name = pair_fields[1];
         } else if (key == "stream-size" && f.size() == 2) {
             if (!proto::parse_size(f[1], UINT64_MAX / 2, parsed.stream_size)) {
                 error = "bad stream-size";

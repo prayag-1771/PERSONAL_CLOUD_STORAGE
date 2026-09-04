@@ -260,6 +260,23 @@ want "an explicitly named missing file is an error" \
 env -u PCS_TOKEN -u PCS_CACERT -u PCS_USER $BARE delete configured.bin > /dev/null 2>&1
 mv "$LAB/work/pcs.conf" "$LAB/pcs.conf.saved"
 
+echo "=== names with spaces ==="
+# is_safe_name permits spaces, so an ordinary name like this has to survive
+# the whole round trip. It used to be rejected outright, because the command
+# put the name first and the line was split on spaces.
+SPACED="holiday photo.bin"
+head -c 3000 /dev/urandom > "$SPACED"
+cp "$SPACED" spaced.keep
+
+want "a name with a space uploads" \
+     "$(client upload "$SPACED" $SERVER)" "Stored"
+want "and appears in the listing" "$(client list $SERVER)" "holiday photo.bin"
+
+rm -f "$SPACED"
+want "and downloads again" "$(client download "$SPACED" $SERVER)" "Wrote"
+same "with its contents intact" "$SPACED" spaced.keep
+want "and can be deleted" "$(client delete "$SPACED" $SERVER)" "Deleted"
+
 echo "=== deleting a file ==="
 cp original.bin gone.bin
 client upload gone.bin $SERVER > /dev/null

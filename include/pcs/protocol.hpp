@@ -20,14 +20,19 @@
 //
 //   -- file commands: require LOGIN --
 //   -> STAT <name>                  <- META <size> <tag> | NONE
-//   -> PUTFILE <name> <size> <tag>  <- OK            (then <size> raw bytes)
+//   -> PUTFILE <size> <tag> <name>  <- OK            (then <size> raw bytes)
 //   -> GETFILE <name>               <- DATA <size> | NONE   (then raw bytes)
 //   -> DELFILE <name>               <- OK | NONE
+//
+// A file name goes last in every command that carries one, because names may
+// contain spaces. Anything before it is a fixed number of fields, so the
+// remainder of the line is the name.
 //   -- chunk commands: require AUTH --
 //   -> PUTCHUNK <id> <size>         <- OK            (then <size> raw bytes)
 //   -> GETCHUNK <id>                <- DATA <size> | NONE   (then raw bytes)
 //   -> DELCHUNK <id>                <- OK
-//   -> LIST                         <- COUNT <n>, then n lines "<name> <size>"
+//   -> LIST                         <- COUNT <n>, then n lines
+//                                      "<size> <modified> <name>"
 //   -> QUIT                         <- BYE
 //
 // A connection carries as many commands as the client wants; it is not one
@@ -60,6 +65,11 @@ inline constexpr char kBye[]   = "BYE";
 
 // Splits a line on single spaces. Empty fields are dropped.
 std::vector<std::string> split(const std::string& line);
+
+// Splits into at most `limit` fields, with the last one taking the rest of
+// the line verbatim. File names may contain spaces, so any command carrying
+// one puts it last and parses it with this.
+std::vector<std::string> split_n(const std::string& line, size_t limit);
 
 // Parses a decimal size, rejecting anything negative, non-numeric or above
 // `limit`. Sizes arrive from the network, so an overflowing value must not

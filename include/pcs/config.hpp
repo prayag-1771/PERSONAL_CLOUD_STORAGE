@@ -10,7 +10,7 @@ namespace pcs {
 namespace config {
 
 // Wire protocol identifier exchanged in the HELLO handshake.
-inline constexpr char kProtocol[] = "pcs/3";
+inline constexpr char kProtocol[] = "pcs/4";
 
 // --- Encrypted stream container -------------------------------------------
 inline constexpr uint8_t  kStreamVersion = 1;

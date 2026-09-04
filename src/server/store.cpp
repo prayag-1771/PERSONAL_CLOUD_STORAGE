@@ -1,6 +1,7 @@
 #include "store.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <fstream>
 
 #include "pcs/cipher.hpp"
@@ -117,8 +118,8 @@ bool Store::remove_file(const string& user, const string& name) const {
     return existed;
 }
 
-vector<pair<string, uint64_t>> Store::list_files(const string& user) const {
-    vector<pair<string, uint64_t>> out;
+vector<Store::StoredFile> Store::list_files(const string& user) const {
+    vector<StoredFile> out;
     const fs::path base = account_dir(user);
     if (base.empty()) return out;
 
@@ -130,10 +131,24 @@ vector<pair<string, uint64_t>> Store::list_files(const string& user) const {
         if (!entry.is_regular_file(ec)) continue;
         const string name = entry.path().filename().string();
         if (!is_safe_name(name)) continue;
-        out.emplace_back(name, static_cast<uint64_t>(entry.file_size(ec)));
+        StoredFile file;
+        file.name = name;
+        file.size = static_cast<uint64_t>(entry.file_size(ec));
+
+        // Converted to plain seconds so the wire format does not depend on
+        // whatever clock the local filesystem happens to use.
+        const fs::file_time_type when = entry.last_write_time(ec);
+        if (!ec) {
+            file.modified = static_cast<int64_t>(
+                chrono::duration_cast<chrono::seconds>(
+                    when.time_since_epoch())
+                    .count());
+        }
+        out.push_back(file);
     }
 
-    sort(out.begin(), out.end());
+    sort(out.begin(), out.end(),
+         [](const StoredFile& a, const StoredFile& b) { return a.name < b.name; });
     return out;
 }
 

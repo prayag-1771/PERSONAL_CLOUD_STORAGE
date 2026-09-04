@@ -166,10 +166,10 @@ bool Session::handle(const string& line) {
         cmd == proto::kDelChunk;
     if (is_chunk_command && !machine_trusted_) return fail("token-required");
 
-    if (cmd == proto::kStat)     return do_stat(f);
-    if (cmd == proto::kPutFile)  return do_put_file(f);
-    if (cmd == proto::kGetFile)  return do_get_file(f);
-    if (cmd == proto::kDelFile)  return do_del_file(f);
+    if (cmd == proto::kStat)     return do_stat(line);
+    if (cmd == proto::kPutFile)  return do_put_file(line);
+    if (cmd == proto::kGetFile)  return do_get_file(line);
+    if (cmd == proto::kDelFile)  return do_del_file(line);
     if (cmd == proto::kPutChunk) return do_put_chunk(f);
     if (cmd == proto::kGetChunk) return do_get_chunk(f);
     if (cmd == proto::kDelChunk) return do_del_chunk(f);
@@ -214,7 +214,8 @@ bool Session::do_auth(const vector<string>& f) {
     return true;
 }
 
-bool Session::do_stat(const vector<string>& f) {
+bool Session::do_stat(const string& line) {
+    const vector<string> f = proto::split_n(line, 2);
     if (f.size() != 2) return fail("malformed-stat");
 
     uint64_t size = 0;
@@ -230,12 +231,14 @@ bool Session::do_stat(const vector<string>& f) {
     return true;
 }
 
-bool Session::do_put_file(const vector<string>& f) {
+bool Session::do_put_file(const string& line) {
+    // PUTFILE <size> <tag> <name>, the name taking the rest of the line.
+    const vector<string> f = proto::split_n(line, 4);
     if (f.size() != 4) return fail("malformed-putfile");
 
-    const string& name = f[1];
+    const string& name = f[3];
     uint64_t size = 0;
-    if (!proto::parse_size(f[2], config::kMaxTransferSize, size))
+    if (!proto::parse_size(f[1], config::kMaxTransferSize, size))
         return fail("bad-size");
 
     const fs::path final_path = store_.file_path(user_, name);
@@ -259,7 +262,7 @@ bool Session::do_put_file(const vector<string>& f) {
             fs::remove(temp, ec);
             return fail("store-failed");
         }
-        store_.write_tag(user_, name, f[3]);
+        store_.write_tag(user_, name, f[2]);
     }
 
     channel_.send_line(proto::kOk);
@@ -268,7 +271,8 @@ bool Session::do_put_file(const vector<string>& f) {
     return true;
 }
 
-bool Session::do_get_file(const vector<string>& f) {
+bool Session::do_get_file(const string& line) {
+    const vector<string> f = proto::split_n(line, 2);
     if (f.size() != 2) return fail("malformed-getfile");
 
     fs::path path;
@@ -291,7 +295,8 @@ bool Session::do_get_file(const vector<string>& f) {
     return true;
 }
 
-bool Session::do_del_file(const vector<string>& f) {
+bool Session::do_del_file(const string& line) {
+    const vector<string> f = proto::split_n(line, 2);
     if (f.size() != 2) return fail("malformed-delfile");
 
     bool removed = false;
@@ -387,17 +392,17 @@ bool Session::do_del_chunk(const vector<string>& f) {
 }
 
 bool Session::do_list() {
-    vector<pair<string, uint64_t>> files;
+    vector<Store::StoredFile> files;
     {
         lock_guard<mutex> guard(store_.mutex());
         files = store_.list_files(user_);
     }
 
-    channel_.send_line(string(proto::kCount) + " " +
-                       to_string(files.size()));
-    for (const pair<string, uint64_t>& entry : files) {
-        if (!channel_.send_line(entry.first + " " +
-                                to_string(entry.second)))
+    channel_.send_line(string(proto::kCount) + " " + to_string(files.size()));
+    for (const Store::StoredFile& entry : files) {
+        // Size and time first, name last, so a name with spaces survives.
+        if (!channel_.send_line(to_string(entry.size) + " " +
+                                to_string(entry.modified) + " " + entry.name))
             return false;
     }
     return true;

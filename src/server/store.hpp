@@ -46,8 +46,13 @@ public:
     // which the caller reports rather than treating as an error.
     bool remove_file(const std::string& user, const std::string& name) const;
 
-    std::vector<std::pair<std::string, uint64_t>> list_files(
-        const std::string& user) const;
+    struct StoredFile {
+        std::string name;
+        uint64_t size = 0;
+        int64_t modified = 0;   // seconds since the epoch
+    };
+
+    std::vector<StoredFile> list_files(const std::string& user) const;
 
     // Serialises the rename and delete steps between connection threads.
     std::mutex& mutex() const { return mutex_; }

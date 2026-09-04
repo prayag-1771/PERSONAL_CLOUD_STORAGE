@@ -19,6 +19,25 @@ vector<string> split(const string& line) {
     return parts;
 }
 
+vector<string> split_n(const string& line, size_t limit) {
+    vector<string> parts;
+    if (limit == 0) return parts;
+
+    size_t i = 0;
+    while (i < line.size() && parts.size() + 1 < limit) {
+        while (i < line.size() && line[i] == ' ') i++;
+        const size_t start = i;
+        while (i < line.size() && line[i] != ' ') i++;
+        if (i > start) parts.push_back(line.substr(start, i - start));
+    }
+
+    // Whatever is left, minus leading spaces, is the final field. It is kept
+    // verbatim so a name with spaces in it survives intact.
+    while (i < line.size() && line[i] == ' ') i++;
+    if (i < line.size()) parts.push_back(line.substr(i));
+    return parts;
+}
+
 bool parse_size(const string& text, uint64_t limit, uint64_t& out) {
     if (text.empty() || text.size() > 20) return false;
 

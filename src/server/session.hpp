@@ -29,10 +29,12 @@ private:
 
     bool do_login(const std::vector<std::string>& fields);
     bool do_auth(const std::vector<std::string>& fields);
-    bool do_stat(const std::vector<std::string>& fields);
-    bool do_put_file(const std::vector<std::string>& fields);
-    bool do_get_file(const std::vector<std::string>& fields);
-    bool do_del_file(const std::vector<std::string>& fields);
+    // These carry a file name, so they parse the raw line rather than a
+    // pre-split one: a name may contain spaces, including repeated ones.
+    bool do_stat(const std::string& line);
+    bool do_put_file(const std::string& line);
+    bool do_get_file(const std::string& line);
+    bool do_del_file(const std::string& line);
     bool do_put_chunk(const std::vector<std::string>& fields);
     bool do_get_chunk(const std::vector<std::string>& fields);
     bool do_del_chunk(const std::vector<std::string>& fields);
